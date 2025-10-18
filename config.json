@@ -1,0 +1,16 @@
+{
+  "sample_rate": 16000,
+  "channels": 1,
+  "hotkey": "ctrl+space",
+  "vad_enabled": true,
+  "vad_backend": "simple",
+  "vad_threshold": 0.01,
+  "min_speech_ratio": 0.1,
+  "ot_smoothing": false,
+  "frame_length_ms": 30,
+  "silence_duration_ms": 300,
+  "vad_aggressiveness": 2,
+  "debug_mode": false,
+  "debug_audio_output": false,
+  "debug_vad_details": false
+}

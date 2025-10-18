@@ -1,0 +1,30 @@
+# Voice Transcriber Dependencies
+
+# Core audio processing
+sounddevice>=0.4.6
+numpy>=1.21.0
+
+# OpenAI API (use compatible version for Python 3.14)
+openai==1.12.0
+
+# System integration
+keyboard>=0.13.5
+pyperclip>=1.8.2
+pynput>=1.7.6
+
+# HTTP requests
+requests>=2.25.0
+httpx==0.27.0
+
+# VAD dependencies
+# Note: webrtcvad requires Visual C++ compiler on Windows
+# webrtcvad>=2.0.10
+# For older Python versions, you can also use:
+# torch>=2.0.0
+# torchaudio>=2.0.0
+# silero-vad>=4.0.0
+
+# Debug and visualization tools
+matplotlib>=3.5.0
+soundfile>=0.12.0
+scipy>=1.9.0
