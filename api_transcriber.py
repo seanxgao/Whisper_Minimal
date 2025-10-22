@@ -22,7 +22,8 @@ from recorder import Recorder
 from transcriber import Transcriber
 from text_cleaner import TextCleaner
 from keyboard_typer import KeyboardTyper
-from vad import run_vad
+from unified_vad import run_vad
+from realtime import RealtimePipeline
 
 class App:
     """Main application class"""
@@ -33,6 +34,10 @@ class App:
         self.config = load_config()
         self.api_key = load_api_key()
         
+        # Hotkey debouncing
+        self.last_hotkey_time = 0
+        self.hotkey_debounce_ms = 500  # 500ms debounce
+        
         # Initialize components
         self.recorder = Recorder(
             sample_rate=self.config.get("sample_rate", 16000),
@@ -41,6 +46,13 @@ class App:
         self.transcriber = Transcriber(self.api_key)
         self.text_cleaner = TextCleaner(self.api_key)
         self.keyboard_typer = KeyboardTyper()
+        
+        # Initialize realtime pipeline if enabled
+        self.realtime_mode = self.config.get("realtime_mode", True)
+        if self.realtime_mode:
+            self.realtime_pipeline = RealtimePipeline(self.config, self.api_key)
+        else:
+            self.realtime_pipeline = None
         
         # VAD settings
         self.vad_enabled = self.config.get("vad_enabled", True)
@@ -67,6 +79,7 @@ class App:
         signal.signal(signal.SIGTERM, self._signal_handler)
         
         print("Voice Transcriber initialized!")
+        print(f"Mode: {'Realtime Pipeline' if self.realtime_mode else 'Traditional Batch'}")
         print(f"VAD: {'Enabled' if self.vad_enabled else 'Disabled'} ({self.vad_backend})")
         print(f"Hotkey: {self.config.get('hotkey', 'ctrl+space')}")
         if self.debug_mode:
@@ -83,12 +96,19 @@ class App:
     
     def start(self):
         """Start the main application loop"""
-        hotkey = self.config.get("hotkey", "ctrl+space")
-        
         try:
             import keyboard
-            keyboard.add_hotkey(hotkey, self._toggle_recording)
-            print(f"Press {hotkey} to start/stop recording. Press Ctrl+C to exit.")
+            # Register three hotkeys (order matters - more specific first)
+            keyboard.add_hotkey("ctrl+shift+space", self._start_session)
+            keyboard.add_hotkey("shift+ctrl+space", self._end_session)
+            keyboard.add_hotkey("ctrl+space", self._cut_segment)
+            
+            print("=== Segment Recording Mode ===")
+            print("Ctrl+Shift+Space: Start/End recording session")
+            print("Ctrl+Space: Cut current segment, start next")
+            print("Shift+Ctrl+Space: End session, output final text")
+            print("Ctrl+C: Exit program")
+            print()
             
             while self.running:
                 time.sleep(0.1)
@@ -98,26 +118,73 @@ class App:
         finally:
             self._cleanup()
     
-    def _toggle_recording(self):
-        """Toggle recording state"""
+    def _debounce_hotkey(self):
+        """Check if hotkey should be processed (debouncing)"""
+        current_time = time.time() * 1000  # Convert to milliseconds
+        if current_time - self.last_hotkey_time < self.hotkey_debounce_ms:
+            return False
+        self.last_hotkey_time = current_time
+        return True
+    
+    def _start_session(self):
+        """Start recording session or end if already recording"""
+        if not self._debounce_hotkey():
+            return
+            
         if self.recording:
+            # If already recording, treat this as end session
+            print("Ending recording session...")
             self._stop_recording()
+            return
+        
+        print("Starting recording session...")
+        self._start_recording()
+    
+    def _cut_segment(self):
+        """Cut current segment and start next"""
+        if not self._debounce_hotkey():
+            return
+            
+        if not self.recording:
+            print("No active recording session")
+            return
+        
+        print("Cutting current segment...")
+        if self.realtime_mode and self.realtime_pipeline:
+            # Cut current segment and process
+            self.realtime_pipeline.cut_and_process_segment()
         else:
-            self._start_recording()
+            # Traditional mode: stop recording
+            self._stop_recording()
+    
+    def _end_session(self):
+        """End recording session"""
+        if not self._debounce_hotkey():
+            return
+            
+        if not self.recording:
+            print("No active recording session")
+            return
+        
+        print("Ending recording session...")
+        self._stop_recording()
     
     def _start_recording(self):
         """Start recording"""
         if self.recording:
             return
         
-        self.recording = True
-        success = self.recorder.start_recording()
-        
-        if success:
-            print("Recording started...")
+        if self.realtime_mode and self.realtime_pipeline:
+            # Use realtime pipeline mode
+            success = self.realtime_pipeline.start_recording()
+            if success:
+                self.recording = True
+                print("Realtime recording started...")
+            else:
+                print("Failed to start realtime recording")
         else:
-            print("Failed to start recording")
-            self.recording = False
+            # Use traditional batch mode
+            self._start_traditional_recording()
     
     def _stop_recording(self):
         """Stop recording and process audio"""
@@ -125,6 +192,34 @@ class App:
             return
         
         self.recording = False
+        
+        if self.realtime_mode and self.realtime_pipeline:
+            # Use realtime pipeline mode
+            print("Stopping realtime recording...")
+            final_text = self.realtime_pipeline.stop_recording()
+            if final_text:
+                print(f"Final text: {final_text}")
+                print("Typing final text...")
+                self.keyboard_typer.type_text(final_text)
+                print("Text output completed!")
+            else:
+                print("No final text received")
+        else:
+            # Use traditional batch mode
+            self._stop_traditional_recording()
+    
+    def _start_traditional_recording(self):
+        """Start traditional batch recording"""
+        success = self.recorder.start_recording()
+        
+        if success:
+            self.recording = True
+            print("Recording started...")
+        else:
+            print("Failed to start recording")
+    
+    def _stop_traditional_recording(self):
+        """Stop traditional batch recording and process audio"""
         print("Stopping recording...")
         
         # Get audio data
@@ -144,6 +239,7 @@ class App:
         
         # Process audio in separate thread
         threading.Thread(target=self._process, args=(audio_data,), daemon=True).start()
+    
     
     def _process(self, audio_data):
         """Process recorded audio"""
@@ -251,7 +347,14 @@ class App:
         
         # Stop any ongoing recording
         if self.recording:
-            self.recorder.stop_recording()
+            if self.realtime_mode and self.realtime_pipeline:
+                self.realtime_pipeline.stop_recording()
+            else:
+                self.recorder.stop_recording()
+        
+        # Clean up realtime pipeline
+        if self.realtime_pipeline:
+            self.realtime_pipeline.cleanup()
         
         # Show session statistics
         if self.total_recordings > 0:
@@ -275,10 +378,14 @@ class App:
             if os.path.exists("temp_files"):
                 shutil.rmtree("temp_files")
                 print("Temporary files cleaned up")
+            if os.path.exists("temp_segments"):
+                shutil.rmtree("temp_segments")
+                print("Temporary segments cleaned up")
         except Exception as e:
                 print(f"Could not clean temp files: {e}")
         
         print("Goodbye!")
+    
 
 def main():
     """Main entry point"""

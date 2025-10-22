@@ -1,56 +1,40 @@
 """
-Keyboard input simulation using pynput
+Clipboard copy and paste helper
 """
 
 import time
-from pynput.keyboard import Controller
-from typing import Optional
+import pyperclip
+import keyboard
+
 
 class KeyboardTyper:
-    """Cross-platform keyboard input simulation"""
-    
+    """Copy text to clipboard and paste at cursor"""
+
     def __init__(self):
-        """Initialize keyboard controller"""
-        self.keyboard = Controller()
-    
-    def type_text(self, text: str, delay: float = 0.01) -> bool:
+        """Initialize clipboard/paste utilities"""
+        pass
+
+    def type_text(self, text: str) -> bool:
         """
-        Type text at current cursor position
-        
+        Copy text to clipboard and paste with Ctrl+V
+
         Args:
-            text: Text to type
-            delay: Delay between keystrokes (seconds)
-            
+            text: Text to paste
+
         Returns:
             True if successful, False otherwise
         """
         if not text or not text.strip():
             return False
-        
+
         try:
-            # Small delay to ensure focus
-            time.sleep(0.1)
-            
-            # Type text with specified delay
-            for char in text:
-                self.keyboard.type(char)
-                if delay > 0:
-                    time.sleep(delay)
-            
+            pyperclip.copy(text)
+            # brief delay to ensure clipboard is ready
+            time.sleep(0.05)
+            # send paste shortcut
+            keyboard.send("ctrl+v")
             return True
-            
+
         except Exception as e:
-            print(f"Keyboard typing failed: {e}")
+            print(f"Clipboard paste failed: {e}")
             return False
-    
-    def type_text_fast(self, text: str) -> bool:
-        """
-        Type text quickly without delays
-        
-        Args:
-            text: Text to type
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        return self.type_text(text, delay=0.0)
