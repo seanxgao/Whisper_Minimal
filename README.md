@@ -6,11 +6,14 @@ A voice recording and transcription tool with GPT text cleaning and streamlined 
 
 ### Core Features
 - **Segmented Recording (Manual)**: Ctrl+Shift+Space to start/end session; Ctrl+Space to cut current segment
-- **Unified VAD (Consolidated)**: Single `unified_vad.py` used across modes
+- **VAD Options**: 
+  - **Energy VAD**: Adaptive threshold based on environment noise (default)
+  - **Threshold VAD**: Simple fixed threshold detection
+- **Unified Mercy Time**: Configurable grace period (300ms default) applied to all VAD algorithms after detection
 - **Whisper Transcription**: Uses OpenAI Whisper API for accurate speech-to-text
 - **GPT Text Cleanup**: Final cleanup via GPT-based API
 - **Clipboard + Auto Paste**: Final text is copied to clipboard and pasted via Ctrl+V
-- **Zero Config Defaults**: Sensible defaults without `config.json` or advanced config
+- **Preset Configurations**: Simple, Professional, and Fast presets for different use cases
 - **Background Operation**: Runs in background without interfering with other apps
 
 ### Segmented Pipeline (Current) and Future Direction
@@ -26,16 +29,17 @@ pip install -r requirements.txt
 ```
 
 ### 2. Setup API Key
-Set your OpenAI API key as an environment variable:
-```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
-
-Alternatively, create a file with your API key and specify the path in the code.
+- If you have the API key in environment variables, the program will use it automatically
+- If not, the program will prompt you to enter it manually (not stored permanently)
 
 ### 3. Run the Program
 ```bash
-python api_transcriber.py
+python whisper_minimal.py
+```
+
+Or with custom configuration:
+```bash
+python whisper_minimal.py --config config.json
 ```
 
 ## Portable Version
@@ -45,6 +49,8 @@ The `portable/` folder is a build-only wrapper that packages the minimal project
 ### Build Portable Executable
 ```bash
 cd portable
+
+# Build portable executable
 python build_portable.py
 ```
 
@@ -61,7 +67,7 @@ Note: The portable builder copies sources from the minimal project at build time
 ## Usage
 
 ### Segmented Recording Mode
-1. Run: `python api_transcriber.py`
+1. Run: `python whisper_minimal.py`
 2. Start session: `Ctrl+Shift+Space`
 3. Cut current segment and start next: `Ctrl+Space`
 4. End session: `Ctrl+Shift+Space` (toggle)
@@ -76,7 +82,8 @@ Basic start/stop recording with batch transcription and cleanup.
 ## Output
 
 The program will:
-- Analyze audio quality using VAD (Voice Activity Detection)
+- Analyze audio quality using Energy-based VAD (Voice Activity Detection)
+- Apply 300ms mercy time to avoid cutting off speech
 - Skip API calls if insufficient speech is detected (saves costs)
 - Transcribe speech using OpenAI Whisper API
 - Reorganize text using GPT-4o-mini for better clarity and logic
@@ -84,9 +91,29 @@ The program will:
 - Copy the text to clipboard as backup
 - Display processing steps and statistics in the console
 
+## VAD (Voice Activity Detection)
+
+The system uses a simple energy-based VAD algorithm:
+
+### Algorithm
+- **Frame Processing**: 25ms frames with 10ms hop length
+- **Energy Calculation**: Mean squared energy per frame
+- **Adaptive Threshold**: `threshold = mean_energy + alpha * std_energy`
+- **Mercy Time**: 300ms grace period after voice detection
+
+### Parameters
+- **Alpha**: Controls sensitivity (0.3-1.0)
+  - 0.3: More sensitive (Professional preset)
+  - 0.5: Balanced (Simple preset)
+  - 0.7: Less sensitive (Fast preset)
+
 ## Configuration
 
-The application uses sensible defaults and doesn't require a configuration file. Advanced configuration has been removed to simplify usage.
+Edit `config.json` to change settings. Key options:
+- **vad_backend**: VAD algorithm ("energy" or "threshold")
+- **vad_threshold**: Fixed threshold for threshold VAD (default: 0.01)
+- **vad_mercy_time_ms**: Mercy time applied to all VAD algorithms (milliseconds, default: 300)
+- **debug_mode**: Enable debug output
 
 ## Troubleshooting
 
@@ -102,7 +129,7 @@ The application uses sensible defaults and doesn't require a configuration file.
 ## Files
 
 ### Core Application (Minimal)
-- `api_transcriber.py` - Main application orchestrating all components
+- `whisper_minimal.py` - Main application orchestrating all components
 - `config_utils.py` - Configuration management with sensible defaults
 
 ### Core Modules
@@ -110,7 +137,7 @@ The application uses sensible defaults and doesn't require a configuration file.
 - `transcriber.py` - OpenAI Whisper API transcription
 - `text_cleaner.py` - GPT-4o-mini text cleaning and reorganization
 - `keyboard_typer.py` - Outputs final text by copying to clipboard and auto-pasting
-- `unified_vad.py` - Unified Voice Activity Detection for all modes
+- `vad/` - Voice Activity Detection module
 - `realtime/` - Realtime pipeline modules
   - `processor.py` - Segment processor and text aggregator
   - `pipeline.py` - Realtime pipeline manager
@@ -120,7 +147,7 @@ The application uses sensible defaults and doesn't require a configuration file.
   - `build_portable.py` - Builds portable executable from minimal codebase
   - `dist/WhisperPortable.exe` - Generated portable executable
 
-**Note**: The portable version automatically copies all necessary files from minimal during build, including the `realtime/` module and `unified_vad.py`, ensuring zero code duplication. The portable directory itself contains no source code, only build tools and the generated executable.
+**Note**: The portable version automatically copies all necessary files from minimal during build, including the `realtime/` module and `vad/` directory, ensuring zero code duplication. The portable directory itself contains no source code, only build tools and the generated executable.
 
 ### Documentation
 - `requirements.txt` - Dependencies

@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-10-23
+
+### VAD System Restructure
+- Reorganized VAD system into dedicated `vad/` folder
+- Created `vad/vad.py` as main VAD controller
+- Implemented two VAD algorithms:
+  - **ThresholdVAD**: Simple fixed threshold detection
+  - **EnergyVAD**: Statistical adaptive threshold detection
+- Unified mercy time mechanism applied to all VAD algorithms
+
+### Configuration System
+- Added JSON configuration support via `config.json`
+- Moved from hardcoded settings to configurable parameters
+- API key handling: automatic environment variable detection with manual input fallback
+- Removed unnecessary preset system and configuration files
+
+### Code Cleanup
+- Renamed `api_transcriber.py` to `whisper_minimal.py` for consistency
+- Removed redundant files and functions
+- Simplified VAD interfaces and removed over-engineering
+- Consolidated documentation into single README.md
+
 ## 2025-10-22
 
 ### Pipeline

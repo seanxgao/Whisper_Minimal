@@ -1,0 +1,13 @@
+{
+  "sample_rate": 16000,
+  "channels": 1,
+  "hotkey": "ctrl+space",
+  "vad_enabled": true,
+  "vad_backend": "energy",
+  "vad_threshold": 0.01,
+  "vad_mercy_time_ms": 300,
+  "realtime_mode": true,
+  "debug_mode": false,
+  "min_speech_ratio": 0.1,
+  "vad_aggressiveness": 3
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-API Voice Transcriber - Modular version
+API Voice Transcriber
 """
 
 import os
@@ -11,32 +11,62 @@ import signal
 import sys
 import pyperclip
 import warnings
+import numpy as np
 from typing import Optional
 
-# Suppress Pydantic V1 compatibility warnings
-warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality isn't compatible with Python 3.14 or greater")
+warnings.filterwarnings("ignore")
 
-# Import our modules
-from config_utils import load_config, load_api_key
+import os
 from recorder import Recorder
 from transcriber import Transcriber
 from text_cleaner import TextCleaner
 from keyboard_typer import KeyboardTyper
-from unified_vad import run_vad
+from vad.vad import run_vad
 from realtime import RealtimePipeline
 
 class App:
     """Main application class"""
     
-    def __init__(self):
+    def __init__(self, preset: Optional[str] = None, config_file: Optional[str] = None):
         """Initialize the application"""
-        # Load configuration
-        self.config = load_config()
-        self.api_key = load_api_key()
+        # Default configuration
+        self.config = {
+            "sample_rate": 16000,
+            "channels": 1,
+            "hotkey": "ctrl+space",
+            "vad_enabled": True,
+            "vad_backend": "energy",
+            "vad_mercy_time_ms": 300,  # Mercy time for all VAD algorithms
+            "realtime_mode": True,
+            "debug_mode": False
+        }
         
-        # Hotkey debouncing
+        # Load configuration from JSON file if provided
+        if config_file and os.path.exists(config_file):
+            import json
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    file_config = json.load(f)
+                    self.config.update(file_config)
+                    if self.config.get('debug_mode', False):
+                        print(f"Loaded configuration from: {config_file}")
+            except Exception as e:
+                print(f"Warning: Failed to load config file {config_file}: {e}")
+                print("Using default configuration")
+        
+        # Load API key
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            print("OpenAI API key not found in environment variables.")
+            self.api_key = input("Please enter your OpenAI API key: ").strip()
+            if not self.api_key:
+                raise Exception("No API key provided. Exiting.")
+            # Set temporarily for this session only
+            os.environ["OPENAI_API_KEY"] = self.api_key
+        
         self.last_hotkey_time = 0
-        self.hotkey_debounce_ms = 500  # 500ms debounce
+        self.hotkey_debounce_ms = 500  # 500ms debounce time
+    
         
         # Initialize components
         self.recorder = Recorder(
@@ -56,7 +86,8 @@ class App:
         
         # VAD settings
         self.vad_enabled = self.config.get("vad_enabled", True)
-        self.vad_backend = self.config.get("vad_backend", "simple")
+        self.vad_backend = self.config.get("vad_backend", "energy")
+        self.vad_threshold = self.config.get("vad_threshold", 0.01)
         self.min_speech_ratio = self.config.get("min_speech_ratio", 0.1)
         self.vad_aggressiveness = self.config.get("vad_aggressiveness", 2)
         
@@ -78,20 +109,22 @@ class App:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
         
-        print("Voice Transcriber initialized!")
-        print(f"Mode: {'Realtime Pipeline' if self.realtime_mode else 'Traditional Batch'}")
-        print(f"VAD: {'Enabled' if self.vad_enabled else 'Disabled'} ({self.vad_backend})")
+        # Ultra-clean initialization - only show hotkey
         print(f"Hotkey: {self.config.get('hotkey', 'ctrl+space')}")
         if self.debug_mode:
             print("Debug mode: ENABLED")
+            print(f"VAD: {self.vad_backend}")
+            print(f"Mode: {'Realtime Pipeline' if self.realtime_mode else 'Traditional Batch'}")
+            print(f"VAD: {'Enabled' if self.vad_enabled else 'Disabled'} ({self.vad_backend})")
             print(f"  - Audio output: {'ON' if self.debug_audio_output else 'OFF'}")
             print(f"  - VAD details: {'ON' if self.debug_vad_details else 'OFF'}")
     
     def _signal_handler(self, signum, frame):
         """Handle termination signals"""
-        print(f"\nReceived signal {signum}, shutting down...")
+        if False:  # Disable signal received message
+            print(f"\nReceived signal {signum}, shutting down...")
         self.running = False
-        self._cleanup()
+        # Don't call _cleanup here, let finally block handle it
         sys.exit(0)
     
     def start(self):
@@ -114,7 +147,8 @@ class App:
                 time.sleep(0.1)
                 
         except KeyboardInterrupt:
-            print("\nShutting down...")
+            if False:  # Disable shutting down message
+                print("\nShutting down...")
         finally:
             self._cleanup()
     
@@ -133,11 +167,13 @@ class App:
             
         if self.recording:
             # If already recording, treat this as end session
-            print("Ending recording session...")
+            if False:  # Disable ending recording session message
+                print("Ending recording session...")
             self._stop_recording()
             return
         
-        print("Starting recording session...")
+        if False:  # Disable starting recording session message
+            print("Starting recording session...")
         self._start_recording()
     
     def _cut_segment(self):
@@ -146,10 +182,12 @@ class App:
             return
             
         if not self.recording:
-            print("No active recording session")
+            if False:  # Disable no active recording session message
+                print("No active recording session")
             return
         
-        print("Cutting current segment...")
+        if False:  # Disable cutting segment message
+            print("Cutting current segment...")
         if self.realtime_mode and self.realtime_pipeline:
             # Cut current segment and process
             self.realtime_pipeline.cut_and_process_segment()
@@ -163,10 +201,12 @@ class App:
             return
             
         if not self.recording:
-            print("No active recording session")
+            if False:  # Disable no active recording session message
+                print("No active recording session")
             return
         
-        print("Ending recording session...")
+        if False:  # Disable ending recording session message
+            print("Ending recording session...")
         self._stop_recording()
     
     def _start_recording(self):
@@ -179,7 +219,8 @@ class App:
             success = self.realtime_pipeline.start_recording()
             if success:
                 self.recording = True
-                print("Realtime recording started...")
+                if False:  # Disable realtime recording started message
+                    print("Realtime recording started...")
             else:
                 print("Failed to start realtime recording")
         else:
@@ -195,15 +236,20 @@ class App:
         
         if self.realtime_mode and self.realtime_pipeline:
             # Use realtime pipeline mode
-            print("Stopping realtime recording...")
+            if False:  # Disable stopping realtime recording message
+                print("Stopping realtime recording...")
             final_text = self.realtime_pipeline.stop_recording()
             if final_text:
-                print(f"Final text: {final_text}")
-                print("Typing final text...")
+                if False:  # Disable final text message
+                    print(f"Final text: {final_text}")
+                if False:  # Disable typing final text message
+                    print("Typing final text...")
                 self.keyboard_typer.type_text(final_text)
-                print("Text output completed!")
+                if False:  # Disable text output completed message
+                    print("Text output completed!")
             else:
-                print("No final text received")
+                if False:  # Disable no final text message
+                    print("No final text received")
         else:
             # Use traditional batch mode
             self._stop_traditional_recording()
@@ -214,7 +260,8 @@ class App:
         
         if success:
             self.recording = True
-            print("Recording started...")
+            if False:  # Disable recording started message
+                print("Recording started...")
         else:
             print("Failed to start recording")
     
@@ -274,8 +321,10 @@ class App:
                         temp_file,
                         backend=self.vad_backend,
                         sample_rate=self.recorder.sample_rate,
-                        threshold=self.config.get("vad_threshold", 0.01),
-                        aggressiveness=self.vad_aggressiveness
+                        threshold=self.vad_threshold,
+                        aggressiveness=self.vad_aggressiveness,
+                        alpha=0.3,  # VAD sensitivity parameter
+                        mercy_time_ms=self.config.get("vad_mercy_time_ms", 300)
                     )
                     
                     speech_ratio = vad_result["speech_ratio"]
@@ -287,7 +336,6 @@ class App:
                     if self.debug_mode and self.debug_vad_details:
                         print(f"Debug VAD Details:")
                         print(f"  - Backend: {self.vad_backend}")
-                        print(f"  - Threshold: {self.config.get('vad_threshold', 0.01)}")
                         print(f"  - Min speech ratio: {self.min_speech_ratio}")
                         print(f"  - Total segments: {len(vad_result['segments'])}")
                         if self.vad_backend in ["optimal_transport", "ot"]:
@@ -343,7 +391,8 @@ class App:
     
     def _cleanup(self):
         """Clean up resources and show statistics"""
-        print("\nCleaning up...")
+        if False:  # Disable cleaning up message
+            print("\nCleaning up...")
         
         # Stop any ongoing recording
         if self.recording:
@@ -384,13 +433,27 @@ class App:
         except Exception as e:
                 print(f"Could not clean temp files: {e}")
         
-        print("Goodbye!")
+        if False:  # Disable goodbye message
+            print("Goodbye!")
     
 
 def main():
     """Main entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Whisper Minimal - Smart Voice Input Assistant")
+    parser.add_argument("--config", "-c", 
+                       help="Path to custom JSON config file")
+    
+    args = parser.parse_args()
+    
+    print("=== Whisper Minimal ===")
+    print("Smart Voice Input Assistant")
+    print("Press Ctrl+C to exit")
+    print()
+    
     try:
-        app = App()
+        app = App(config_file=args.config)
         app.start()
     except Exception as e:
         print(f"Application failed: {e}")

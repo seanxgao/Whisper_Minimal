@@ -13,7 +13,7 @@ from recorder import Recorder
 from transcriber import Transcriber
 from text_cleaner import TextCleaner
 from keyboard_typer import KeyboardTyper
-from unified_vad import UnifiedVAD
+from vad.energy_vad import EnergyVAD
 
 class RealtimePipeline:
     """Realtime speech transcription pipeline"""
@@ -39,8 +39,8 @@ class RealtimePipeline:
         self.text_cleaner = TextCleaner(api_key)
         self.keyboard_typer = KeyboardTyper()
         
-        # Use unified VAD for all voice activity detection
-        self.unified_vad = UnifiedVAD()
+        # Use energy VAD for voice activity detection
+        self.energy_vad = EnergyVAD(sample_rate=config.get("sample_rate", 16000), alpha=0.3)
         
         # Audio segmentation parameters
         self.sample_rate = config.get("sample_rate", 16000)
@@ -73,11 +73,12 @@ class RealtimePipeline:
         # Setup callback functions
         self._setup_callbacks()
         
-        print("Realtime pipeline initialized!")
-        print(f"  - Sample rate: {config.get('sample_rate', 16000)}Hz")
-        print(f"  - Silence threshold: {config.get('realtime_silence_threshold', 1.0)}s")
-        print(f"  - Min speech duration: {config.get('realtime_min_speech_duration', 0.3)}s")
-        print(f"  - Margin: {config.get('realtime_margin', 0.2)}s")
+        if False:  # Disable pipeline initialization output for ultra-clean interface
+            print("Realtime pipeline initialized!")
+            print(f"  - Sample rate: {config.get('sample_rate', 16000)}Hz")
+            print(f"  - Silence threshold: {config.get('realtime_silence_threshold', 1.0)}s")
+            print(f"  - Min speech duration: {config.get('realtime_min_speech_duration', 0.3)}s")
+            print(f"  - Margin: {config.get('realtime_margin', 0.2)}s")
     
     def _setup_callbacks(self):
         """Setup callback functions"""
@@ -98,7 +99,7 @@ class RealtimePipeline:
             self.segment_processor.start()
             
             # Reset state
-            self.unified_vad.reset()
+            self.energy_vad.reset()
             self.text_aggregator.reset()
             self.session_start_time = time.time()
             self.session_segments = 0
@@ -111,7 +112,8 @@ class RealtimePipeline:
                 self.is_recording = True
                 self.is_processing = True
                 # Start recording
-                print("[Pipeline] Recording started")
+                if False:  # Disable recording started message
+                    print("[Pipeline] Recording started")
                 return True
             else:
                 print("[Pipeline] Failed to start recording")
@@ -122,22 +124,28 @@ class RealtimePipeline:
             return False
     
     def cut_and_process_segment(self):
-        """切断当前段并立即处理"""
+        """Cut current segment and process immediately"""
         if not self.is_recording:
             return
         
-        print("[Pipeline] Cutting current segment...")
+        if self.config.get("debug_mode", False):
+            print("[Pipeline] Cutting current segment...")
         
         # Get current audio segment
         segment = self._get_current_segment()
         if segment:
-            print(f"[Pipeline] Current segment info: duration {segment['duration']:.2f}s")
+            if self.config.get("debug_mode", False):
+                print(f"[Pipeline] Current segment info: duration {segment['duration']:.2f}s")
             
             # VAD detection
-            is_voice, reason = self.unified_vad.is_voice_activity(segment["audio_data"])
+            is_voice, reason = self.energy_vad.is_voice_activity(segment["audio_data"])
             if is_voice:
-                print(f"[Pipeline] VAD passed: {reason}")
-                print("[Pipeline] Sending to Whisper API...")
+                if self.config.get("debug_mode", False):
+                    print(f"[Pipeline] VAD passed: {reason}")
+                if not self.config.get("debug_mode", False):
+                    print("Transcribing with Whisper API...")
+                else:
+                    print("[Pipeline] Sending to Whisper API...")
                 
                 # Process this segment immediately
                 self._process_segment_immediately(segment)
@@ -147,13 +155,15 @@ class RealtimePipeline:
             print("[Pipeline] No audio data to process")
         
         # Continue recording next segment
-        print("[Pipeline] Continuing to record next segment...")
+        if False:  # Disable continuing to record message
+            print("[Pipeline] Continuing to record next segment...")
     
     def _process_segment_immediately(self, segment):
         """Process audio segment immediately and show results"""
         try:
             # Direct transcription call
-            print("[Pipeline] Transcribing...")
+            if False:  # Disable transcribing message
+                print("[Pipeline] Transcribing...")
             # Save audio data to temporary file first
             temp_file = self._save_audio_to_temp_file(segment["audio_data"])
             if temp_file:
@@ -169,15 +179,22 @@ class RealtimePipeline:
             
             if transcription_result and transcription_result.strip():
                 text = transcription_result.strip()
-                print(f"[Pipeline] Transcription result: {text}")
+                if not self.config.get("debug_mode", False):
+                    print("Transcription completed!")
+                    print(f"Whisper API: {text}")
+                else:
+                    print(f"[Pipeline] Transcription result: {text}")
                 
                 # Add to text aggregator
                 self.text_aggregator.add_text_segment(text)
                 
                 # Show current buffer status
                 current_buffer = self.text_aggregator.get_current_text()
-                print(f"[Pipeline] Current buffer: {current_buffer}")
-                print("-" * 50)
+                if not self.config.get("debug_mode", False):
+                    print(f"[Pipeline] Current buffer: {current_buffer}")
+                else:
+                    print(f"[Pipeline] Current buffer: {current_buffer}")
+                    print("-" * 50)
             else:
                 print("[Pipeline] Transcription failed or empty result")
                 
@@ -196,7 +213,7 @@ class RealtimePipeline:
         segment = self._get_current_segment()
         if segment:
             # Check VAD before processing
-            is_voice, reason = self.unified_vad.is_voice_activity(segment["audio_data"])
+            is_voice, reason = self.energy_vad.is_voice_activity(segment["audio_data"])
             if is_voice:
                 self.segment_processor.add_segment(segment)
                 print(f"[Pipeline] Segment sent for processing: {segment['duration']:.2f}s")
@@ -212,18 +229,24 @@ class RealtimePipeline:
         
         try:
             self.is_recording = False
-            print("[Pipeline] Ending recording session...")
+            if self.config.get("debug_mode", False):
+                print("[Pipeline] Ending recording session...")
             
             # Process final audio segment
             final_segment = self._get_current_segment()
             if final_segment:
-                print(f"[Pipeline] Processing final segment: duration {final_segment['duration']:.2f}s")
+                if self.config.get("debug_mode", False):
+                    print(f"[Pipeline] Processing final segment: duration {final_segment['duration']:.2f}s")
                 
                 # VAD detection
-                is_voice, reason = self.unified_vad.is_voice_activity(final_segment["audio_data"])
+                is_voice, reason = self.energy_vad.is_voice_activity(final_segment["audio_data"])
                 if is_voice:
-                    print(f"[Pipeline] Final segment VAD passed: {reason}")
-                    print("[Pipeline] Sending final segment to Whisper API...")
+                    if self.config.get("debug_mode", False):
+                        print(f"[Pipeline] Final segment VAD passed: {reason}")
+                    if self.config.get("debug_mode", False):
+                        print("[Pipeline] Sending final segment to Whisper API...")
+                    else:
+                        pass  # Sending final segment to Whisper API
                     
                     # Process final segment immediately
                     self._process_segment_immediately(final_segment)
@@ -236,7 +259,8 @@ class RealtimePipeline:
             audio_data = self.recorder.stop_recording()
             
             # Wait for all segments to be processed
-            print("[Pipeline] Waiting for all segments to complete...")
+            if False:  # Disable waiting for segments message
+                print("[Pipeline] Waiting for all segments to complete...")
             self._wait_for_processing_complete()
             
             # Stop segment processor
@@ -244,23 +268,31 @@ class RealtimePipeline:
             
             # Get current buffered text
             current_text = self.text_aggregator.get_current_text()
-            print(f"[Pipeline] Final buffer text: {current_text}")
+            if self.config.get("debug_mode", False):
+                print(f"[Pipeline] Final buffer text: {current_text}")
             
             # Send to Cleanup API
             if current_text.strip():
-                print("[Pipeline] Sending to Cleanup API...")
+                if not self.config.get("debug_mode", False):
+                    print("Starting GPT text cleaning...")
+                else:
+                    print("[Pipeline] Sending to Cleanup API...")
                 final_text = self.text_cleaner.clean(current_text)
-                print(f"[Pipeline] Cleanup result: {final_text}")
+                if not self.config.get("debug_mode", False):
+                    print(f"Final result: {final_text}")
+                else:
+                    print(f"[Pipeline] Cleanup result: {final_text}")
             else:
                 final_text = current_text
                 print("[Pipeline] No text to clean")
             
             self.is_processing = False
             
-            # 显示会话统计
+            # Show session statistics
             self._show_session_statistics()
             
-            print("[Pipeline] Recording stopped")
+            if False:  # Disable recording stopped message
+                print("[Pipeline] Recording stopped")
             return final_text
             
         except Exception as e:
@@ -344,19 +376,22 @@ class RealtimePipeline:
         processor_stats = self.segment_processor.get_queue_status()
         aggregator_stats = self.text_aggregator.get_statistics()
         
-        print("\n=== Session Statistics ===")
-        print(f"Session duration: {session_duration:.1f}s")
-        print(f"Speech segments: {self.session_segments}")
-        print(f"Current text: {len(self.text_aggregator.get_current_text())} characters")
-        print(f"Processor statistics:")
-        print(f"  - Total segments: {processor_stats['total_segments']}")
-        print(f"  - Processed: {processor_stats['processed_segments']}")
-        print(f"  - Failed: {processor_stats['failed_segments']}")
-        print(f"  - Skipped: {processor_stats['skipped_segments']}")
-        print(f"Aggregator statistics:")
-        print(f"  - Segment count: {aggregator_stats['segment_count']}")
-        print(f"  - Total duration: {aggregator_stats['total_duration']:.1f}s")
-        print("========================")
+        if self.config.get("debug_mode", False):
+            print("\n=== Session Statistics ===")
+            print(f"Session duration: {session_duration:.1f}s")
+            print(f"Speech segments: {self.session_segments}")
+            print(f"Current text: {len(self.text_aggregator.get_current_text())} characters")
+            print(f"Processor statistics:")
+            print(f"  - Total segments: {processor_stats['total_segments']}")
+            print(f"  - Processed: {processor_stats['processed_segments']}")
+            print(f"  - Failed: {processor_stats['failed_segments']}")
+            print(f"  - Skipped: {processor_stats['skipped_segments']}")
+            print(f"Aggregator statistics:")
+            print(f"  - Segment count: {aggregator_stats['segment_count']}")
+            print(f"  - Total duration: {aggregator_stats['total_duration']:.1f}s")
+            print("========================")
+        else:
+            pass  # Session statistics removed for cleaner output
     
     def get_status(self) -> Dict[str, Any]:
         """Get pipeline status"""
@@ -411,13 +446,15 @@ class RealtimePipeline:
             timestamp = int(time.time() * 1000)
             temp_file = os.path.join(tempfile.gettempdir(), f"whisper_segment_{timestamp}.wav")
             
-            print(f"[Pipeline] Saving audio: {len(audio_data)} samples, dtype: {audio_data.dtype}")
+            if False:  # Disable saving audio message
+                print(f"[Pipeline] Saving audio: {len(audio_data)} samples, dtype: {audio_data.dtype}")
             
             # Ensure audio data is int16 format
             if audio_data.dtype != np.int16:
                 # Assume input is float32, convert to int16
                 audio_int16 = (audio_data * 32767).astype(np.int16)
-                print(f"[Pipeline] Converted to int16: {audio_int16.dtype}")
+                if False:  # Disable conversion message
+                    print(f"[Pipeline] Converted to int16: {audio_int16.dtype}")
             else:
                 audio_int16 = audio_data
             
@@ -428,7 +465,8 @@ class RealtimePipeline:
                 wf.setframerate(self.sample_rate)
                 wf.writeframes(audio_int16.tobytes())
             
-            print(f"[Pipeline] Audio saved to: {temp_file}")
+            if False:  # Disable audio saved message
+                print(f"[Pipeline] Audio saved to: {temp_file}")
             return temp_file
             
         except Exception as e:
@@ -441,4 +479,5 @@ class RealtimePipeline:
             self.stop_recording()
         
         self.segment_processor.cleanup()
-        print("[Pipeline] Resources cleaned up")
+        if False:  # Disable resources cleaned up message
+            print("[Pipeline] Resources cleaned up")

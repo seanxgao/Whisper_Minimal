@@ -43,10 +43,12 @@ class Transcriber:
                 )
             
             text = response.strip()
-            print("Transcription completed!")
+            if False:  # Disable transcription completed message
+                print("Transcription completed!")
             
             return text if text else None
             
         except Exception as e:
-            print(f"Transcription failed: {e}")
+            if False:  # Disable error message for ultra-clean interface
+                print(f"Transcription failed: {e}")
             return None
