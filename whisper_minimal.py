@@ -15,8 +15,6 @@ import numpy as np
 from typing import Optional
 
 warnings.filterwarnings("ignore")
-
-import os
 from recorder import Recorder
 from transcriber import Transcriber
 from text_cleaner import TextCleaner
@@ -121,8 +119,6 @@ class App:
     
     def _signal_handler(self, signum, frame):
         """Handle termination signals"""
-        if False:  # Disable signal received message
-            print(f"\nReceived signal {signum}, shutting down...")
         self.running = False
         # Don't call _cleanup here, let finally block handle it
         sys.exit(0)
@@ -147,8 +143,7 @@ class App:
                 time.sleep(0.1)
                 
         except KeyboardInterrupt:
-            if False:  # Disable shutting down message
-                print("\nShutting down...")
+            pass
         finally:
             self._cleanup()
     
@@ -167,13 +162,9 @@ class App:
             
         if self.recording:
             # If already recording, treat this as end session
-            if False:  # Disable ending recording session message
-                print("Ending recording session...")
             self._stop_recording()
             return
         
-        if False:  # Disable starting recording session message
-            print("Starting recording session...")
         self._start_recording()
     
     def _cut_segment(self):
@@ -182,12 +173,8 @@ class App:
             return
             
         if not self.recording:
-            if False:  # Disable no active recording session message
-                print("No active recording session")
             return
         
-        if False:  # Disable cutting segment message
-            print("Cutting current segment...")
         if self.realtime_mode and self.realtime_pipeline:
             # Cut current segment and process
             self.realtime_pipeline.cut_and_process_segment()
@@ -201,12 +188,8 @@ class App:
             return
             
         if not self.recording:
-            if False:  # Disable no active recording session message
-                print("No active recording session")
             return
         
-        if False:  # Disable ending recording session message
-            print("Ending recording session...")
         self._stop_recording()
     
     def _start_recording(self):
@@ -219,8 +202,6 @@ class App:
             success = self.realtime_pipeline.start_recording()
             if success:
                 self.recording = True
-                if False:  # Disable realtime recording started message
-                    print("Realtime recording started...")
             else:
                 print("Failed to start realtime recording")
         else:
@@ -236,20 +217,9 @@ class App:
         
         if self.realtime_mode and self.realtime_pipeline:
             # Use realtime pipeline mode
-            if False:  # Disable stopping realtime recording message
-                print("Stopping realtime recording...")
             final_text = self.realtime_pipeline.stop_recording()
             if final_text:
-                if False:  # Disable final text message
-                    print(f"Final text: {final_text}")
-                if False:  # Disable typing final text message
-                    print("Typing final text...")
                 self.keyboard_typer.type_text(final_text)
-                if False:  # Disable text output completed message
-                    print("Text output completed!")
-            else:
-                if False:  # Disable no final text message
-                    print("No final text received")
         else:
             # Use traditional batch mode
             self._stop_traditional_recording()
@@ -260,8 +230,6 @@ class App:
         
         if success:
             self.recording = True
-            if False:  # Disable recording started message
-                print("Recording started...")
         else:
             print("Failed to start recording")
     
@@ -391,9 +359,6 @@ class App:
     
     def _cleanup(self):
         """Clean up resources and show statistics"""
-        if False:  # Disable cleaning up message
-            print("\nCleaning up...")
-        
         # Stop any ongoing recording
         if self.recording:
             if self.realtime_mode and self.realtime_pipeline:
@@ -432,10 +397,7 @@ class App:
                 print("Temporary segments cleaned up")
         except Exception as e:
                 print(f"Could not clean temp files: {e}")
-        
-        if False:  # Disable goodbye message
-            print("Goodbye!")
-    
+
 
 def main():
     """Main entry point"""

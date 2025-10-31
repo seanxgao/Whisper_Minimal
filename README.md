@@ -161,7 +161,6 @@ Edit `config.json` to change settings. Key options:
 - `openai` - Whisper and GPT API access
 - `keyboard` - Hotkey detection
 - `pyperclip` - Clipboard operations
-- `pyperclip` - Clipboard operations
 - `requests` - HTTP requests
 - `webrtcvad` - Voice Activity Detection (optional, fallback)
 - `silero-vad` - Alternative VAD (optional, fallback, requires torch)

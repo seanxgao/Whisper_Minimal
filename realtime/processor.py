@@ -53,14 +53,6 @@ class SegmentProcessor:
         
         # Temporary file directory
         self.temp_dir = tempfile.mkdtemp(prefix="whisper_segments_")
-        if False:  # Disable temp directory output for ultra-clean interface
-            print(f"  - Temp directory: {self.temp_dir}")
-        
-        if False:  # Disable segment processor initialization output for ultra-clean interface
-            print(f"Segment processor initialized:")
-            print(f"  - Sample rate: {sample_rate}Hz")
-            print(f"  - Max queue size: {max_queue_size}")
-            print(f"  - Processing timeout: {processing_timeout}s")
     
     def start(self):
         """Start segment processor"""
@@ -70,8 +62,6 @@ class SegmentProcessor:
         self.is_running = True
         self.processing_thread = threading.Thread(target=self._processing_loop, daemon=True)
         self.processing_thread.start()
-        if False:  # Disable processor start message
-            print("[SegmentProcessor] Processor started")
     
     def stop(self):
         """Stop segment processor"""
@@ -83,9 +73,6 @@ class SegmentProcessor:
         # Wait for processing thread to finish
         if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join(timeout=5.0)
-        
-        if False:  # Disable processor stopped message
-            print("[SegmentProcessor] Processor stopped")
     
     def add_segment(self, segment_data: Dict[str, Any]) -> bool:
         """
@@ -146,20 +133,13 @@ class SegmentProcessor:
             temp_file = self._save_audio_to_temp(segment_data["audio_data"])
             
             if temp_file is None:
-                if False:  # Disable error message for ultra-clean interface
-                    print(f"[SegmentProcessor] Cannot save audio file")
                 self.failed_segments += 1
                 return
             
             # Transcribe audio
-            if False:  # Disable transcription start message
-                print(f"[SegmentProcessor] Starting transcription: {segment_data['duration']:.2f}s")
             text = self.transcriber.transcribe(temp_file)
             
             if text and text.strip():
-                if False:  # Disable transcription completed message
-                    print(f"[SegmentProcessor] Transcription completed: {text[:50]}...")
-                
                 # Send text to callback function
                 if self.on_text_ready:
                     self.on_text_ready({
@@ -259,11 +239,8 @@ class SegmentProcessor:
             import shutil
             if os.path.exists(self.temp_dir):
                 shutil.rmtree(self.temp_dir)
-                if False:  # Disable temp directory cleanup message
-                    print(f"[SegmentProcessor] Temp directory cleaned: {self.temp_dir}")
         except Exception as e:
-            if False:  # Disable error message for ultra-clean interface
-                print(f"[SegmentProcessor] Failed to clean temp directory: {e}")
+            pass
 
 
 class TextAggregator:
@@ -298,9 +275,6 @@ class TextAggregator:
             "end_time": current_time,
             "duration": 0.0
         })
-        
-        if False:  # Disable added text segment message
-            print(f"[TextAggregator] Added text segment: {text[:50]}...")
     
     def get_current_text(self) -> str:
         """Get current aggregated text"""
@@ -336,8 +310,6 @@ class TextAggregator:
         """Reset aggregator"""
         self.segments.clear()
         self.final_text = ""
-        if False:  # Disable text aggregator reset message
-            print("[TextAggregator] Reset")
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get statistics"""

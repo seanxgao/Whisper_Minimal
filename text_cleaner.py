@@ -60,9 +60,6 @@ Output only the cleaned text, no explanations or additional commentary."""
             )
             
             cleaned_text = response.choices[0].message.content.strip()
-            if False:  # Disable GPT cleaning successful message
-                print("GPT cleaning successful!")
-            
             return cleaned_text if cleaned_text else text
             
         except Exception as e:

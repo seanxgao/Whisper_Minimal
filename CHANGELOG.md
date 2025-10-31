@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-10-30
+
+### Documentation
+- Added comprehensive API documentation (`API.md`) with complete reference for all public classes and functions
+- Documented VAD module interfaces, Realtime Pipeline API, and usage examples
+
 ## 2025-10-23
 
 ### VAD System Restructure
