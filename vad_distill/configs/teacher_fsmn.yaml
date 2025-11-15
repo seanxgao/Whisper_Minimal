@@ -1,0 +1,8 @@
+# Teacher FSMN-VAD model configuration
+teacher:
+  model_dir: "teacher"  # Path relative to project root, or use absolute path
+  device: "cpu"  # cpu or cuda
+  frame_hop: 0.01  # seconds per frame
+  frame_len: 0.025  # frame length in seconds
+  batch_size: 1  # for inference
+

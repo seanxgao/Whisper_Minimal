@@ -1,0 +1,29 @@
+# Student A: Tiny frame-level VAD model configuration
+model:
+  n_mels: 80
+  hidden_dims: [64, 128, 64]  # CNN channel dimensions
+  kernel_sizes: [3, 3, 3]  # kernel sizes for each conv layer
+  dropout: 0.1
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  num_epochs: 50
+  optimizer: "adam"
+  weight_decay: 0.0001
+  save_interval: 5  # save checkpoint every N epochs
+  early_stopping_patience: 10
+
+data:
+  manifest_path: "data/manifests/train.jsonl"
+  frame_probs_dir: "data/teacher_labels/frame_probs"
+  frame_hop: 0.01
+  frame_len: 0.025
+  n_mels: 80
+  cache_features: false  # whether to cache log-mel features
+  cache_dir: "data/tiny_vad_inputs"  # cache directory if cache_features is true
+
+paths:
+  checkpoint_dir: "models/tiny_vad/checkpoints"
+  onnx_dir: "models/tiny_vad/onnx"
+

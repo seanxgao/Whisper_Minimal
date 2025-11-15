@@ -1,0 +1,26 @@
+# Student B: Chunk trigger model configuration
+model:
+  window_size: 50  # frames in the input window
+  hidden_dims: [32, 16]  # hidden dimensions for MLP/CNN
+  model_type: "mlp"  # mlp or cnn
+
+training:
+  batch_size: 64
+  learning_rate: 0.0005
+  num_epochs: 30
+  optimizer: "adam"
+  weight_decay: 0.0001
+  save_interval: 5
+  early_stopping_patience: 8
+
+data:
+  frame_probs_dir: "data/teacher_labels/frame_probs"
+  segments_dir: "data/teacher_labels/segments"
+  frame_hop: 0.01  # seconds per frame
+  positive_margin: 0.05  # seconds around segment end to label as positive
+  negative_margin: 0.2  # minimum distance from segment end to label as negative
+
+paths:
+  checkpoint_dir: "models/chunk_trigger/checkpoints"
+  onnx_dir: "models/chunk_trigger/onnx"
+
