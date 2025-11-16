@@ -40,10 +40,9 @@ def export_tiny_vad_onnx(config: Dict[str, Any], checkpoint_path: str | None = N
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     
-    # Create dummy input
+    # Create dummy input with fixed size: (batch=1, time=100, freq=80)
     n_mels = config.get('model', {}).get('n_mels', 80)
-    # Dynamic time dimension
-    dummy_input = torch.randn(1, 100, n_mels)  # (batch=1, time=100, freq=n_mels)
+    dummy_input = torch.randn(1, 100, n_mels)  # Fixed-size chunk input
     
     # Export to ONNX
     onnx_dir = Path(config.get('paths', {}).get('onnx_dir', 'models/tiny_vad/onnx'))
@@ -51,6 +50,7 @@ def export_tiny_vad_onnx(config: Dict[str, Any], checkpoint_path: str | None = N
     onnx_path = onnx_dir / "tiny_vad.onnx"
     
     logger.info(f"Exporting to ONNX: {onnx_path}")
+    logger.info(f"Input shape: {dummy_input.shape} (fixed-size chunks)")
     
     torch.onnx.export(
         model,
@@ -58,12 +58,50 @@ def export_tiny_vad_onnx(config: Dict[str, Any], checkpoint_path: str | None = N
         str(onnx_path),
         input_names=['mel_features'],
         output_names=['vad_logits'],
-        dynamic_axes={
-            'mel_features': {1: 'time'},  # Dynamic time dimension
-            'vad_logits': {1: 'time'},
-        },
+        # Fixed-size input: no dynamic axes
         opset_version=11,  # Adjust if needed
     )
     
     logger.info(f"ONNX export completed: {onnx_path}")
+    
+    # Validate ONNX model with ONNX Runtime
+    try:
+        import onnxruntime as ort
+        import numpy as np
+        
+        logger.info("Validating ONNX model with ONNX Runtime...")
+        
+        # Create ONNX Runtime session
+        session = ort.InferenceSession(str(onnx_path))
+        
+        # Run inference with dummy input
+        dummy_input_np = dummy_input.numpy().astype(np.float32)
+        onnx_outputs = session.run(None, {'mel_features': dummy_input_np})
+        onnx_output = onnx_outputs[0]
+        
+        # Run PyTorch inference for comparison
+        with torch.no_grad():
+            pytorch_output = model(dummy_input).numpy()
+        
+        # Compare outputs
+        max_diff = np.abs(onnx_output - pytorch_output).max()
+        mean_diff = np.abs(onnx_output - pytorch_output).mean()
+        
+        logger.info(f"ONNX vs PyTorch comparison:")
+        logger.info(f"  Max difference: {max_diff:.2e}")
+        logger.info(f"  Mean difference: {mean_diff:.2e}")
+        
+        tolerance = 1e-5
+        if max_diff > tolerance:
+            logger.warning(
+                f"ONNX output differs from PyTorch by {max_diff:.2e} "
+                f"(tolerance: {tolerance:.2e})"
+            )
+        else:
+            logger.info(f"ONNX validation passed (tolerance: {tolerance:.2e})")
+        
+    except ImportError:
+        logger.warning("onnxruntime not available, skipping ONNX validation")
+    except Exception as e:
+        logger.warning(f"ONNX validation failed: {e}")
 

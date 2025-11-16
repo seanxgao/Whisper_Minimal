@@ -1,29 +1,44 @@
-# Student A: Tiny frame-level VAD model configuration
+# Tiny VAD Model Configuration
+# Chunk-based training with fixed-size inputs
+
+# Chunk configuration
+chunk_size: 100  # Frames per chunk (1 second at 10ms hop)
+stride: 50       # Stride between chunks (50% overlap)
+n_mels: 80       # Number of mel filter banks
+
+# Data paths
+chunks_dir: "data/chunks"
+teacher_labels_dir: "data/teacher_labels"
+
+# Data sampling configuration
+data:
+  sample_list: "data/sample_list.txt"  # persistent subset file
+  num_samples: 2000                     # how many to sample if file does not exist
+
+# Training configuration
+batch_size: 32
+learning_rate: 0.001
+epochs: 100
+num_workers: 4
+random_seed: 2025
+
+# Logging and checkpointing
+use_tensorboard: true
+save_every_n_steps: 1000
+validate_every_n_epochs: 5
+
+# Resume training (set to checkpoint path or null)
+resume_from: null
+
+# Model architecture
 model:
   n_mels: 80
-  hidden_dims: [64, 128, 64]  # CNN channel dimensions
-  kernel_sizes: [3, 3, 3]  # kernel sizes for each conv layer
+  hidden_dims: [32, 64, 32]
+  kernel_sizes: [3, 3, 3]
   dropout: 0.1
 
-training:
-  batch_size: 32
-  learning_rate: 0.001
-  num_epochs: 50
-  optimizer: "adam"
-  weight_decay: 0.0001
-  save_interval: 5  # save checkpoint every N epochs
-  early_stopping_patience: 10
-
-data:
-  manifest_path: "data/manifests/train.jsonl"
-  frame_probs_dir: "data/teacher_labels/frame_probs"
-  frame_hop: 0.01
-  frame_len: 0.025
-  n_mels: 80
-  cache_features: false  # whether to cache log-mel features
-  cache_dir: "data/tiny_vad_inputs"  # cache directory if cache_features is true
-
+# Paths
 paths:
-  checkpoint_dir: "models/tiny_vad/checkpoints"
+  checkpoint_dir: "vad_distill/distill/tiny_vad/checkpoints"
   onnx_dir: "models/tiny_vad/onnx"
-
+  logs_dir: "logs"

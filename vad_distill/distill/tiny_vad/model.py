@@ -11,8 +11,10 @@ class TinyVADModel(nn.Module):
     """
     Small 1D CNN model for frame-level VAD prediction.
     
-    Input: (batch, time, freq) log-mel spectrogram
-    Output: (batch, time, 1) frame-level speech probability logits
+    Input: (batch, 100, 80) log-mel spectrogram - fixed-size chunks
+    Output: (batch, 100, 1) frame-level speech probability logits
+    
+    This model expects fixed-size input chunks of 100 frames (1 second at 10ms hop).
     """
     
     def __init__(
@@ -64,11 +66,25 @@ class TinyVADModel(nn.Module):
         Forward pass.
 
         Args:
-            x: Input tensor of shape (batch, time, freq)
+            x: Input tensor of shape (batch, 100, 80) - fixed-size chunks
 
         Returns:
-            Output logits of shape (batch, time, 1)
+            Output logits of shape (batch, 100, 1)
         """
+        # Validate input shape: must be (batch, 100, 80)
+        if len(x.shape) != 3:
+            raise ValueError(
+                f"Expected 3D input (batch, time, freq), got shape {x.shape}"
+            )
+        if x.shape[1] != 100:
+            raise ValueError(
+                f"Expected time dimension 100, got {x.shape[1]}"
+            )
+        if x.shape[2] != 80:
+            raise ValueError(
+                f"Expected freq dimension 80, got {x.shape[2]}"
+            )
+        
         # Convert (batch, time, freq) to (batch, freq, time) for Conv1d
         x = x.transpose(1, 2)
         

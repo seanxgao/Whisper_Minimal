@@ -52,6 +52,14 @@ dmypy.json
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb_checkpoints
+
+# Training outputs
+training_history.json
+models/
+data/
+# Note: data/tiny_vad_inputs/ contains cached features for faster training
+# These are large but useful - keep them locally, don't commit
 
 # Logs
 *.log

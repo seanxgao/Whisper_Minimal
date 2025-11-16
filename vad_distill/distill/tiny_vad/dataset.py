@@ -1,4 +1,4 @@
-"""Dataset for training tiny VAD model."""
+"""Dataset for training tiny VAD model on fixed-size chunks."""
 
 from __future__ import annotations
 
@@ -7,153 +7,168 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Tuple
 import logging
+import random
 
-from vad_distill.utils.audio_io import load_wav
-from vad_distill.utils.features import log_mel
+# Import chunk config - handle both direct import and relative import
+try:
+    from preprocessing.chunk_config import CHUNK_SIZE, N_MELS
+except ImportError:
+    # Fallback: define constants directly
+    CHUNK_SIZE = 100
+    N_MELS = 80
 
 logger = logging.getLogger(__name__)
 
 
-class TinyVADDataset(Dataset):
+class TinyVADChunkDataset(Dataset):
     """
-    Dataset for training tiny frame-level VAD model.
+    Dataset for training tiny VAD model on preprocessed fixed-size chunks.
     
-    Loads wav files, computes log-mel features, and pairs them with
-    teacher frame-level labels.
+    This dataset loads preprocessed chunk files directly, with no audio loading,
+    feature extraction, or teacher inference during training.
+    
+    Each chunk file contains:
+    - features: np.ndarray of shape (100, 80)
+    - labels: np.ndarray of shape (100,)
     """
     
     def __init__(
         self,
-        manifest_path: str,
-        frame_probs_dir: str,
-        frame_hop: float = 0.01,
-        frame_len: float = 0.025,
-        n_mels: int = 80,
-        cache_features: bool = False,
-        cache_dir: str | None = None,
+        chunks_dir: str | Path,
+        index_file: str | Path | None = None,
+        shuffle: bool = True,
+        seed: int | None = None,
     ):
         """
-        Initialize the dataset.
-
+        Initialize the chunk dataset.
+        
         Args:
-            manifest_path: Path to manifest file (JSONL or CSV)
-            frame_probs_dir: Directory containing teacher frame probabilities (.npy files)
-            frame_hop: Frame hop in seconds
-            frame_len: Frame length in seconds
-            n_mels: Number of mel filter banks
-            cache_features: Whether to cache log-mel features
-            cache_dir: Directory to cache features (if cache_features=True)
+            chunks_dir: Directory containing chunk_*.npy files
+            index_file: Optional path to index.json file. If None, will scan
+                       chunks_dir for all chunk_*.npy files
+            shuffle: Whether to shuffle chunk order (default: True)
+            seed: Random seed for shuffling (default: None)
         """
-        self.manifest_path = Path(manifest_path)
-        self.frame_probs_dir = Path(frame_probs_dir)
-        self.frame_hop = frame_hop
-        self.frame_len = frame_len
-        self.n_mels = n_mels
-        self.cache_features = cache_features
-        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.chunks_dir = Path(chunks_dir)
+        self.shuffle = shuffle
         
-        if self.cache_dir:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if not self.chunks_dir.exists():
+            raise FileNotFoundError(f"Chunks directory not found: {chunks_dir}")
         
-        # Load manifest
-        self.items = self._load_manifest()
-        logger.info(f"Loaded {len(self.items)} items from manifest")
-    
-    def _load_manifest(self) -> list[Dict[str, str]]:
-        """Load manifest file (JSONL or CSV format)."""
-        items = []
+        # Load chunk index
+        if index_file is not None:
+            index_path = Path(index_file)
+            if not index_path.exists():
+                raise FileNotFoundError(f"Index file not found: {index_path}")
+            
+            logger.info(f"Loading chunk index from {index_path}")
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index_data = json.load(f)
+            
+            # Extract chunk filenames from index
+            self.chunk_files = [
+                self.chunks_dir / item['chunk_filename']
+                for item in index_data
+            ]
+        else:
+            # Scan directory for chunk files
+            logger.info(f"Scanning {chunks_dir} for chunk files")
+            self.chunk_files = sorted(
+                self.chunks_dir.glob("chunk_*.npy")
+            )
         
-        if not self.manifest_path.exists():
-            raise FileNotFoundError(f"Manifest file not found: {self.manifest_path}")
+        # Validate all chunk files exist
+        missing = [f for f in self.chunk_files if not f.exists()]
+        if missing:
+            raise FileNotFoundError(
+                f"Missing {len(missing)} chunk files. First few: {missing[:5]}"
+            )
         
-        with open(self.manifest_path, 'r', encoding='utf-8') as f:
-            if self.manifest_path.suffix == '.jsonl':
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        items.append(json.loads(line))
-            elif self.manifest_path.suffix == '.csv':
-                import csv
-                reader = csv.DictReader(f)
-                items = list(reader)
-            else:
-                raise ValueError(f"Unsupported manifest format: {self.manifest_path.suffix}")
+        # Shuffle if requested
+        if self.shuffle:
+            if seed is not None:
+                random.seed(seed)
+            random.shuffle(self.chunk_files)
         
-        return items
+        logger.info(f"Loaded {len(self.chunk_files)} chunk files")
+        if self.shuffle:
+            logger.info("Chunk order is randomized")
     
     def __len__(self) -> int:
-        return len(self.items)
+        """Return total number of chunks."""
+        return len(self.chunk_files)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get a training sample.
-
+        Get a training sample (chunk).
+        
         Args:
-            idx: Sample index
-
+            idx: Chunk index
+        
         Returns:
-            Tuple of (mel_features, frame_labels) as tensors
+            Tuple of (features, labels) as tensors
+            - features: torch.Tensor of shape (100, 80)
+            - labels: torch.Tensor of shape (100,)
+        
+        Raises:
+            ValueError: If chunk shape is invalid
+            FileNotFoundError: If chunk file is missing
         """
-        item = self.items[idx]
-        utt_id = item['utt_id']
-        wav_path = item['wav_path']
+        chunk_path = self.chunk_files[idx]
         
-        # Load or compute log-mel features
-        mel_features = self._get_mel_features(utt_id, wav_path)
+        if not chunk_path.exists():
+            raise FileNotFoundError(f"Chunk file not found: {chunk_path}")
         
-        # Load teacher frame labels
-        frame_labels = self._load_frame_labels(utt_id)
-        
-        # Align lengths (truncate or pad if needed)
-        min_len = min(len(mel_features), len(frame_labels))
-        mel_features = mel_features[:min_len]
-        frame_labels = frame_labels[:min_len]
-        
-        # Convert to tensors
-        mel_tensor = torch.from_numpy(mel_features).float()
-        label_tensor = torch.from_numpy(frame_labels).float()
-        
-        return mel_tensor, label_tensor
-    
-    def _get_mel_features(self, utt_id: str, wav_path: str) -> np.ndarray:
-        """Load or compute log-mel features."""
-        # Check cache
-        if self.cache_features and self.cache_dir:
-            cache_path = self.cache_dir / f"{utt_id}.npy"
-            if cache_path.exists():
-                return np.load(cache_path)
-        
-        # Load wav and compute features
-        wav = load_wav(wav_path, target_sr=16000)
-        mel_features = log_mel(
-            wav,
-            sr=16000,
-            n_mels=self.n_mels,
-            frame_len=self.frame_len,
-            frame_hop=self.frame_hop,
-        )
-        
-        # Cache if enabled
-        if self.cache_features and self.cache_dir:
-            cache_path = self.cache_dir / f"{utt_id}.npy"
-            np.save(cache_path, mel_features)
-        
-        return mel_features
-    
-    def _load_frame_labels(self, utt_id: str) -> np.ndarray:
-        """Load teacher frame-level labels."""
-        label_path = self.frame_probs_dir / f"{utt_id}.npy"
-        
-        if not label_path.exists():
-            raise FileNotFoundError(f"Frame labels not found: {label_path}")
-        
-        labels = np.load(label_path)
-        
-        # Ensure 1-D array
-        if len(labels.shape) > 1:
-            labels = labels.flatten()
-        
-        return labels.astype(np.float32)
-
+        try:
+            # Load chunk file
+            chunk_data = np.load(chunk_path, allow_pickle=True).item()
+            
+            # Extract features and labels
+            features = chunk_data['features']  # (100, 80)
+            labels = chunk_data['labels']      # (100,)
+            
+            # STRICT shape validation - fail loudly on mismatch
+            if not isinstance(features, np.ndarray):
+                raise ValueError(
+                    f"Invalid features type in {chunk_path}: "
+                    f"expected np.ndarray, got {type(features)}"
+                )
+            if not isinstance(labels, np.ndarray):
+                raise ValueError(
+                    f"Invalid labels type in {chunk_path}: "
+                    f"expected np.ndarray, got {type(labels)}"
+                )
+            
+            if features.shape != (CHUNK_SIZE, N_MELS):
+                raise ValueError(
+                    f"Invalid features shape in {chunk_path}: "
+                    f"got {features.shape}, expected ({CHUNK_SIZE}, {N_MELS})"
+                )
+            if labels.shape != (CHUNK_SIZE,):
+                raise ValueError(
+                    f"Invalid labels shape in {chunk_path}: "
+                    f"got {labels.shape}, expected ({CHUNK_SIZE},)"
+                )
+            
+            # Check for NaN or Inf
+            if np.any(np.isnan(features)) or np.any(np.isinf(features)):
+                raise ValueError(
+                    f"NaN or Inf values found in features in {chunk_path}"
+                )
+            if np.any(np.isnan(labels)) or np.any(np.isinf(labels)):
+                raise ValueError(
+                    f"NaN or Inf values found in labels in {chunk_path}"
+                )
+            
+            # Convert to tensors
+            features_tensor = torch.from_numpy(features).float()
+            labels_tensor = torch.from_numpy(labels).float()
+            
+            return features_tensor, labels_tensor
+            
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load chunk from {chunk_path}: {e}"
+            ) from e
