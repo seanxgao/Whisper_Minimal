@@ -1,16 +1,10 @@
-# Core dependencies for VAD distillation
 torch>=2.0.0
-numpy>=1.21.0
-soundfile>=0.12.0
-librosa>=0.10.0
-scipy>=1.9.0
-pyyaml>=6.0
-tqdm>=4.65.0
-
-# ModelScope and FunASR for teacher model
-funasr>=1.0.0
-modelscope>=1.0.0
-
-# Optional: for better audio resampling
-# resampy>=0.4.0
+torchaudio>=2.0.0
+numpy
+soundfile
+silero-vad>=0.4.0
+matplotlib
+tqdm
+pyyaml
+ruff
 

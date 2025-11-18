@@ -6,4 +6,3 @@ Includes teacher model wrapper, two student models, and training/export utilitie
 """
 
 __version__ = "0.1.0"
-

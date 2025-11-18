@@ -1,143 +1,115 @@
-"""Visualize VAD predictions on audio file."""
+"""Visualization tool for Tiny VAD outputs."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import numpy as np
 from pathlib import Path
+
 import matplotlib.pyplot as plt
-import logging
+import numpy as np
 
-from vad_distill.utils.logging_utils import setup_logging
-from vad_distill.utils.audio_io import load_wav
-from vad_distill.utils.features import log_mel
-from preprocessing.chunk_config import (
-    FRAME_LEN, FRAME_HOP, N_MELS, SAMPLE_RATE
-)
-
-logger = logging.getLogger(__name__)
+from vad_distill.config import load_config
+from vad_distill.config.chunk_config import FRAME_HOP, FRAME_LEN, N_MELS, SAMPLE_RATE
+from vad_distill.config.data_paths import resolve_paths
+from vad_distill.preprocessing.audio_utils import compute_log_mel, load_audio
 
 
-def visualize_vad(
-    wav_path: str | Path,
-    scores_path: str | Path | None = None,
-    segments_path: str | Path | None = None,
-    output_path: str | Path | None = None,
+def visualize(
+    wav_path: Path,
+    scores_path: Path | None,
+    segments_path: Path | None,
+    output_path: Path | None,
+    show_plot: bool = False,
 ) -> None:
-    """
-    Visualize VAD predictions.
-    
-    Args:
-        wav_path: Path to input WAV file
-        scores_path: Path to frame scores .npy file (optional)
-        segments_path: Path to segments .json file (optional)
-        output_path: Path to save visualization (optional)
-    """
-    wav_path = Path(wav_path)
-    
-    if not wav_path.exists():
-        raise FileNotFoundError(f"WAV file not found: {wav_path}")
-    
-    # Load audio
-    wav = load_wav(str(wav_path), target_sr=SAMPLE_RATE)
+    wav = load_audio(wav_path, target_sr=SAMPLE_RATE)
     duration = len(wav) / SAMPLE_RATE
-    
-    # Load scores if provided
-    frame_scores = None
-    if scores_path:
-        scores_path = Path(scores_path)
-        if scores_path.exists():
-            frame_scores = np.load(scores_path)
-            logger.info(f"Loaded frame scores: {frame_scores.shape}")
-    
-    # Load segments if provided
+    fbank = compute_log_mel(
+        wav, sample_rate=SAMPLE_RATE, n_mels=N_MELS, frame_len=FRAME_LEN, frame_hop=FRAME_HOP
+    )
+
+    scores = None
     segments = None
-    if segments_path:
-        segments_path = Path(segments_path)
-        if segments_path.exists():
-            with open(segments_path, 'r') as f:
-                segments = json.load(f)
-            logger.info(f"Loaded {len(segments)} segments")
-    
-    # Create visualization
+    if scores_path and scores_path.exists():
+        scores = np.load(scores_path)
+    if segments_path and segments_path.exists():
+        with open(segments_path, "r", encoding="utf-8") as handle:
+            segments = json.load(handle)
+
     fig, axes = plt.subplots(3, 1, figsize=(12, 8))
-    
-    # Plot 1: Waveform
     time_axis = np.linspace(0, duration, len(wav))
     axes[0].plot(time_axis, wav, linewidth=0.5)
-    axes[0].set_ylabel('Amplitude')
-    axes[0].set_title(f'Waveform: {wav_path.name}')
-    axes[0].grid(True, alpha=0.3)
-    
-    # Plot 2: Spectrogram (using unified config from chunk_config)
-    fbank = log_mel(wav, sr=SAMPLE_RATE, n_mels=N_MELS, frame_len=FRAME_LEN, frame_hop=FRAME_HOP)
-    time_frames = np.arange(fbank.shape[0]) * FRAME_HOP
+    axes[0].set_ylabel("Amplitude")
+    axes[0].set_title(wav_path.name)
+
     axes[1].imshow(
         fbank.T,
-        aspect='auto',
-        origin='lower',
-        extent=[0, duration, 0, 80],
-        cmap='viridis'
+        aspect="auto",
+        origin="lower",
+        extent=[0, duration, 0, N_MELS],
+        cmap="viridis",
     )
-    axes[1].set_ylabel('Mel Bin')
-    axes[1].set_title('Log-Mel Spectrogram')
-    
-    # Plot 3: VAD Scores and Segments
-    if frame_scores is not None:
-        time_scores = np.arange(len(frame_scores)) * FRAME_HOP
-        axes[2].plot(time_scores, frame_scores, label='VAD Score', linewidth=1)
-        axes[2].axhline(y=0.5, color='r', linestyle='--', label='Threshold (0.5)')
-        
-        # Highlight speech segments
+    axes[1].set_ylabel("Mel bin")
+    axes[1].set_title("Log-mel spectrogram")
+
+    if scores is not None:
+        time_scores = np.arange(len(scores)) * FRAME_HOP
+        axes[2].plot(time_scores, scores, label="VAD")
+        axes[2].axhline(y=0.5, color="r", linestyle="--", label="0.5")
         if segments:
             for start, end in segments:
-                axes[2].axvspan(start, end, alpha=0.3, color='green', label='Speech' if start == segments[0][0] else '')
+                axes[2].axvspan(start, end, alpha=0.3, color="green")
     else:
-        axes[2].text(0.5, 0.5, 'No VAD scores available', 
-                    transform=axes[2].transAxes, ha='center')
-    
-    axes[2].set_xlabel('Time (seconds)')
-    axes[2].set_ylabel('VAD Score')
-    axes[2].set_title('Voice Activity Detection')
-    axes[2].set_ylim([0, 1])
-    axes[2].legend()
+        axes[2].text(0.5, 0.5, "No scores", transform=axes[2].transAxes, ha="center")
+    axes[2].set_xlabel("Seconds")
+    axes[2].set_ylabel("Probability")
+    axes[2].set_ylim(0, 1)
     axes[2].grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    
-    # Save or show
     if output_path:
-        output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        logger.info(f"Saved visualization to {output_path}")
-    else:
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    if show_plot or output_path is None:
         plt.show()
-    
     plt.close()
 
 
-def main():
-    """Main entry point."""
-    setup_logging()
-    
-    parser = argparse.ArgumentParser(description="Visualize VAD predictions")
-    parser.add_argument('wav_path', type=str, help='Path to input WAV file')
-    parser.add_argument('--scores', type=str, help='Path to frame scores .npy file')
-    parser.add_argument('--segments', type=str, help='Path to segments .json file')
-    parser.add_argument('--output', type=str, help='Path to save visualization')
-    
-    args = parser.parse_args()
-    
-    visualize_vad(
-        wav_path=args.wav_path,
-        scores_path=args.scores,
-        segments_path=args.segments,
-        output_path=args.output,
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Visualize Tiny VAD outputs.")
+    parser.add_argument("wav_path")
+    parser.add_argument("--scores")
+    parser.add_argument("--segments")
+    parser.add_argument(
+        "--output",
+        help="Optional output path. Defaults to config.paths.logs_dir/visualizations/<wav>.png.",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Display the plot interactively after saving.",
+    )
+    parser.add_argument("--config", help="Optional config path for log directory.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    paths = resolve_paths(config.get("paths", {}))
+    default_output = (
+        paths.get("logs_dir", Path.cwd() / "logs")
+        / "visualizations"
+        / f"{Path(args.wav_path).stem}.png"
+    )
+    visualize(
+        wav_path=Path(args.wav_path),
+        scores_path=Path(args.scores) if args.scores else None,
+        segments_path=Path(args.segments) if args.segments else None,
+        output_path=Path(args.output) if args.output else default_output,
+        show_plot=args.show,
     )
 
 
 if __name__ == "__main__":
     main()
-

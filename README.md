@@ -1,412 +1,205 @@
-# VAD Distillation
+# Tiny VAD (Distilled)
 
-A Python package for Voice Activity Detection (VAD) distillation using teacher-student architecture. This project distills knowledge from a pretrained FSMN-VAD teacher model into lightweight student models for efficient deployment.
+Tiny VAD is a small frame-level voice activity detector distilled from Silero-VAD.  
+It turns arbitrary audio into 10 ms speech probabilities using log-mel FBANKs, overlapping chunks, and a compact CNN + BiLSTM student.
 
-## Overview
+## Technical highlights
 
-This project implements a complete VAD distillation pipeline with **chunk-based training** for efficient and scalable VAD model training:
+- Format-agnostic audio loader (`wav`, `flac`, `opus`, `mp3`, `m4a`, `ogg`) with ffmpeg fallback.
+- Kaldi-style log-mel FBANK features `compute_log_mel` (25 ms window, 10 ms hop, 80 bins).
+- Teacher–student distillation from Silero frame probabilities to a lightweight student.
+- Overlapping chunk merge (`reassemble_chunk_predictions`) for frame-level reconstruction.
+- DataLoader tuned for Windows + GPU with configurable workers, prefetch, and pinning.
+- ONNX export + notebooks for quick inspection and demos.
 
-1. **Preprocessing**: Extract frame-level features and generate teacher labels
-2. **Chunking**: Create fixed-size chunks (100 frames = 1 second) from frame-level data
-3. **Training**: Train lightweight student models on preprocessed chunks
-4. **Inference**: Deploy trained models for real-time VAD
+## Model structure (student)
 
-## Architecture
+- Input: chunks shaped `(batch, 100, 80)` (time × mel).  
+- Backbone: 3× dilated 1-D convolutions (kernel 5, dilations 1/2/4) with ReLU + dropout.  
+- Temporal context: 1-layer bidirectional LSTM (hidden size 64).  
+- Head: linear layer to logits, then `sigmoid` → per-frame speech probability.
 
-### Chunk-Based Training Pipeline
+## Pipeline overview
 
-The system uses a **frame → chunk → model** architecture:
+1. Load audio (`load_audio`) → mono float32 at 16 kHz.  
+2. Compute log-mel (`compute_log_mel`).  
+3. Chunk to overlapping windows (`chunk_fbank_features` / `create_chunk_dataset`).  
+4. Run Silero teacher to get `teacher_probs`.  
+5. Train TinyVAD on chunks with MSE loss.  
+6. At inference, run student on chunks and merge outputs (`reassemble_chunk_predictions`).  
 
-- **Frame Extraction**: 25ms window, 10ms hop → 100 frames per second
-- **Feature Extraction**: 80-dim log-mel filterbanks
-- **Chunking**: Fixed-size chunks of 100 frames (1 second) with 50-frame stride (50% overlap)
-- **Training**: Fixed-shape tensors `(batch, 100, 80)` → `(batch, 100, 1)`
+## Training
 
-**Key Benefits:**
-- No variable-length audio loading during training
-- Fast dataloader (direct chunk file access)
-- Efficient GPU utilization
-- Scalable to large datasets
-
-### Fixed Tensor Shapes
-
-- **Input**: `(batch, 100, 80)` - 100 frames × 80 mel bins
-- **Output**: `(batch, 100, 1)` - 100 frame-level VAD logits
-- **No ragged tensors, no dynamic padding**
-
-## Project Structure
-
-```
-VAD_Training/
-├── preprocessing/              # Preprocessing pipeline
-│   ├── chunk_config.py        # Chunk configuration constants
-│   ├── extract_fbank.py       # Frame-level feature extraction
-│   ├── generate_teacher_labels.py  # Teacher model inference
-│   └── create_chunks.py       # Chunk creation from frames
-├── vad_distill/               # Python package
-│   ├── teacher.py            # Teacher model wrapper
-│   ├── distill/               # Student models
-│   │   └── tiny_vad/         # Tiny VAD model
-│   │       ├── dataset.py    # Chunk dataset loader
-│   │       ├── model.py      # TinyVAD model
-│   │       ├── train.py      # Training loop
-│   │       ├── export_onnx.py # ONNX export
-│   │       └── checkpoints/   # Model checkpoints
-│   ├── utils/                 # Audio I/O, features utilities
-│   ├── configs/               # YAML configuration files
-│   │   ├── student_tiny_vad.yaml
-│   │   └── teacher_fsmn.yaml
-│   └── scripts/               # CLI entry points
-│       ├── run_preprocessing_pipeline.py
-│       ├── run_teacher_labeling.py
-│       ├── test_single_wav.py
-│       ├── test_directory.py
-│       └── visualize_vad.py
-├── data/                      # Data directories
-│   ├── chunks/                # Preprocessed chunk files
-│   │   ├── chunk_000001.npy
-│   │   ├── chunk_000002.npy
-│   │   ├── index.json
-│   │   └── metadata.json
-│   └── teacher_labels/       # Teacher model outputs
-│       └── {uid}/
-│           ├── frame_probs.npy
-│           └── fbank.npy
-├── logs/                      # Training logs
-│   ├── train.log
-│   ├── train_history.json
-│   └── tensorboard/
-├── models/                    # Model outputs
-│   └── tiny_vad/
-│       └── onnx/
-└── teacher/                   # Teacher model files
-```
-
-## Installation
-
-### Prerequisites
-
-- Python 3.8+
-- PyTorch 2.0+
-- CUDA (optional, for GPU training)
-
-### Install Dependencies
+1. Install dependencies:
 
 ```bash
+python -m venv .venv
+.venv\Scripts\activate  # on Windows
 pip install -r requirements.txt
 ```
 
-Key dependencies: `torch`, `funasr`, `modelscope`, `librosa`, `soundfile`, `numpy`, `scipy`, `pyyaml`, `tqdm`, `matplotlib`, `tensorboard`
-
-## Quick Start
-
-### Step 1: Preprocessing Pipeline
-
-Run the complete preprocessing pipeline to generate chunks:
+2. Point `vad_distill/config/default_config.yaml` at your data root (`paths.*`).  
+3. Ensure chunks are prepared (see pipeline or `run_preprocessing_pipeline.py`).  
+4. Run training:
 
 ```bash
-python -m vad_distill.scripts.run_preprocessing_pipeline \
-    --manifest path/to/manifest.jsonl \
-    --output_root data \
-    --teacher_model_dir teacher \
-    --device cpu
+python -m vad_distill.tiny_vad.train --config vad_distill/config/default_config.yaml
 ```
 
-This will:
-1. Extract fbank features for each audio file → `data/teacher_labels/{uid}/fbank.npy`
-2. Generate teacher labels → `data/teacher_labels/{uid}/frame_probs.npy`
-3. Create fixed-size chunks → `data/chunks/chunk_*.npy`
-4. Generate chunk index and metadata → `data/chunks/index.json`, `data/chunks/metadata.json`
+This produces checkpoints under `outputs/checkpoints` (e.g., `best.pt`).
 
-### Step 2: Train Model
+## Inference
 
-Train the tiny VAD model on preprocessed chunks:
-
-```python
-from vad_distill.utils.config import load_yaml
-from vad_distill.distill.tiny_vad.train import train_tiny_vad
-
-config = load_yaml("vad_distill/configs/student_tiny_vad.yaml")
-train_tiny_vad(config)
-```
-
-The training script will:
-- Load chunks from `data/chunks/`
-- Create fixed-shape batches `(batch, 100, 80)`
-- Train with fast dataloader (no audio I/O during training)
-- Save checkpoints to `vad_distill/distill/tiny_vad/checkpoints/`
-- Log to `logs/train.log` and TensorBoard
-
-### Step 3: Evaluate Model
-
-Test the model on a single WAV file:
+### CLI: one WAV file
 
 ```bash
 python -m vad_distill.scripts.test_single_wav \
-    path/to/audio.wav \
-    vad_distill/distill/tiny_vad/checkpoints/best.pt \
-    --config vad_distill/configs/student_tiny_vad.yaml \
-    --output_dir outputs
+  path/to/audio.wav \
+  outputs/checkpoints/best.pt \
+  --config vad_distill/config/default_config.yaml
 ```
 
-Visualize VAD predictions:
+This saves smoothed scores (`*_scores.npy`) and speech segments (`*_segments.json`), and prints a short JSON summary.
+
+### Notebook demos
+
+- `notebooks/data_preprocessing.ipynb`: end-to-end pipeline from raw audio to chunks and teacher labels.  
+- `notebooks/train_tiny_vad.ipynb`: short training run with loss curves and best checkpoint inspection.  
+- `notebooks/inspect_best_student.ipynb`: compare teacher vs student probabilities over a full utterance.  
+- `notebooks/inference_demo.ipynb`: run the exported ONNX model on a clip and plot student probabilities.
+
+## Visual examples
+
+Snapshots from the notebooks:
+
+- Data preprocessing pipeline (`data_preprocessing.ipynb`):
+
+  ![Data preprocessing](notebooks/pictures/data_preprocessing.png)
+
+- Training loss curves (`train_tiny_vad.ipynb`):
+
+  ![Training MSE](notebooks/pictures/trainingmse.png)
+
+- Teacher vs student alignment (`inspect_best_student.ipynb`):
+
+  ![Student vs teacher probabilities](notebooks/pictures/inspect_best_student.png)
+
+## Export (TorchScript / ONNX)
+
+### TorchScript (local example)
+
+```python
+import torch
+from vad_distill.tiny_vad.model import build_tiny_vad_model
+from vad_distill.config import load_config
+
+config = load_config("vad_distill/config/default_config.yaml")
+model = build_tiny_vad_model(config)
+state = torch.load("outputs/checkpoints/best.pt", map_location="cpu")
+model.load_state_dict(state["model_state_dict"])
+model.eval()
+
+dummy = torch.randn(1, 100, config["model"]["n_mels"])
+traced = torch.jit.trace(model, dummy)
+traced.save("outputs/export/tiny_vad_ts.pt")
+```
+
+### ONNX (script)
 
 ```bash
-python -m vad_distill.scripts.visualize_vad \
-    path/to/audio.wav \
-    --scores outputs/audio_scores.npy \
-    --segments outputs/audio_segments.json \
-    --output outputs/visualization.png
+python -m vad_distill.tiny_vad.export_onxx \
+  --config vad_distill/config/default_config.yaml
 ```
 
-## Configuration
+The ONNX graph is written to `outputs/export/tiny_vad.onnx` by default and can be loaded with `onnxruntime`.
 
-### Training Configuration (`vad_distill/configs/student_tiny_vad.yaml`)
-
-```yaml
-# Chunk configuration
-chunk_size: 100  # Frames per chunk (1 second at 10ms hop)
-stride: 50       # Stride between chunks (50% overlap)
-n_mels: 80       # Number of mel filter banks
-
-# Data paths
-chunks_dir: "data/chunks"
-teacher_labels_dir: "data/teacher_labels"
-
-# Training configuration
-batch_size: 32
-learning_rate: 0.001
-epochs: 100
-num_workers: 4
-
-# Logging and checkpointing
-use_tensorboard: true
-save_every_n_steps: 1000
-validate_every_n_epochs: 5
-
-# Resume training (set to checkpoint path or null)
-resume_from: null
-
-# Model architecture
-model:
-  n_mels: 80
-  hidden_dims: [32, 64, 32]
-  kernel_sizes: [3, 3, 3]
-  dropout: 0.1
-
-# Paths
-paths:
-  checkpoint_dir: "vad_distill/distill/tiny_vad/checkpoints"
-  onnx_dir: "models/tiny_vad/onnx"
-  logs_dir: "logs"
-```
-
-## Input/Output Shapes
-
-### Model I/O
-
-- **Input**: `(batch, 100, 80)` - Fixed-size chunks
-  - 100 frames = 1 second at 10ms hop
-  - 80 mel filter banks
-- **Output**: `(batch, 100, 1)` - Frame-level VAD logits
-  - Squeezed to `(batch, 100)` for loss computation
-
-### Chunk Files
-
-Each chunk file (`chunk_*.npy`) contains:
-```python
-{
-    "features": np.ndarray (100, 80),  # Log-mel features
-    "labels": np.ndarray (100,),      # Frame-level VAD probabilities
-    "uid": str,                        # Audio file identifier
-    "chunk_idx": int                   # Chunk index within audio file
-}
-```
-
-## Model Export
-
-Export trained model to ONNX:
+## Minimal Python wrapper
 
 ```python
-from vad_distill.utils.config import load_yaml
-from vad_distill.distill.tiny_vad.export_onnx import export_tiny_vad_onnx
+from pathlib import Path
 
-config = load_yaml("vad_distill/configs/student_tiny_vad.yaml")
-export_tiny_vad_onnx(
-    config,
-    checkpoint_path="vad_distill/distill/tiny_vad/checkpoints/best.pt"
+import numpy as np
+import torch
+
+from vad_distill.config import load_config
+from vad_distill.config.chunk_config import N_MELS
+from vad_distill.preprocessing.audio_utils import compute_log_mel, load_audio
+from vad_distill.preprocessing.chunking import (
+    chunk_fbank_features,
+    reassemble_chunk_predictions,
 )
+from vad_distill.tiny_vad.model import build_tiny_vad_model
+
+
+class TinyVAD:
+    def __init__(self, checkpoint: str, config_path: str | None = None) -> None:
+        self.config = load_config(config_path)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = build_tiny_vad_model(self.config).to(self.device)
+        state = torch.load(checkpoint, map_location=self.device)
+        self.model.load_state_dict(state["model_state_dict"])
+        self.model.eval()
+
+    def from_wav(self, path: str) -> np.ndarray:
+        wav = load_audio(path)
+        fbank = compute_log_mel(wav, n_mels=N_MELS)
+        chunks = chunk_fbank_features(fbank, pad_incomplete=True)
+        preds = []
+        with torch.no_grad():
+            for _, chunk in chunks:
+                x = torch.from_numpy(chunk).unsqueeze(0).to(self.device)
+                logits = self.model(x)
+                preds.append(torch.sigmoid(logits).cpu().numpy()[0])
+        return reassemble_chunk_predictions(chunks, preds)
+
+
+if __name__ == "__main__":
+    vad = TinyVAD("outputs/checkpoints/best.pt", "vad_distill/config/default_config.yaml")
+    scores = vad.from_wav("path/to/audio.wav")
+    print(scores[:20])
 ```
 
-The exported ONNX model expects fixed input shape `(1, 100, 80)`.
+## Project structure (short)
 
-### ONNX Validation
+```text
+notebooks/                     # Visual, low-friction entry points
+  data_preprocessing.ipynb     # Raw audio → FBANK → chunks → teacher labels
+  train_tiny_vad.ipynb         # Train TinyVAD on preprocessed chunks
+  inspect_best_student.ipynb   # Teacher vs student alignment on full audio
+  inference_demo.ipynb         # ONNX model demo and plots
 
-Validate exported ONNX model against PyTorch:
+vad_distill/
+  config/
+    default_config.yaml        # Paths, training, model hyperparameters
+    chunk_config.py            # Shared frame/chunk sizes and sample rate
+    data_paths.py              # Path resolution and directory helpers
+  preprocessing/
+    audio_utils.py             # Audio loading, resampling, log-mel FBANK
+    chunking.py                # Chunk creation, metadata, reassembly
+    run_preprocessing_pipeline.py  # End-to-end preprocessing CLI
+  teacher/
+    teacher_silero.py          # Silero loader + frame-level probability API
+    frame_level_teacher.py     # Numpy-friendly wrapper used by pipeline
+    generate_teacher_labels.py # Optional offline teacher labelling script
+  tiny_vad/
+    model.py                   # TinyVADModel definition and builder
+    dataset.py                 # Chunk dataset + DataLoader helpers
+    train.py                   # CLI training loop and checkpointing
+    eval.py                    # Validation metrics over held-out chunks
+    export_onxx.py             # Export TinyVAD to ONNX
+  scripts/
+    test_single_wav.py         # Run PyTorch/ONNX model on one audio file
+    visualize_vad.py           # Waveform + FBANK + VAD score visualization
 
-```bash
-python scripts/validate_onnx.py \
-    models/tiny_vad/onnx/tiny_vad.onnx \
-    vad_distill/configs/student_tiny_vad.yaml \
-    vad_distill/distill/tiny_vad/checkpoints/best.pt \
-    --num_tests 10 \
-    --tolerance 1e-5
+requirements.txt               # Core Python dependencies
+pyproject.toml                 # Build + tooling configuration
 ```
 
-## Deployment
+## Future work
 
-### Export Model for Deployment
-
-1. Export trained model to ONNX:
-
-```python
-from vad_distill.utils.config import load_yaml
-from vad_distill.distill.tiny_vad.export_onnx import export_tiny_vad_onnx
-
-config = load_yaml("vad_distill/configs/student_tiny_vad.yaml")
-export_tiny_vad_onnx(
-    config,
-    checkpoint_path="vad_distill/distill/tiny_vad/checkpoints/best.pt"
-)
-```
-
-2. Copy deployment files:
-
-```bash
-cp models/tiny_vad/onnx/tiny_vad.onnx deploy/
-cp deploy/config.json deploy/  # Already included
-```
-
-### Inference Example
-
-Basic inference with ONNX model:
-
-```python
-from deploy.inference_example import TinyVADInference
-from vad_distill.utils.audio_io import load_wav
-
-# Initialize
-inference = TinyVADInference("deploy/tiny_vad.onnx", "deploy/config.json")
-
-# Load and process audio
-wav = load_wav("audio.wav", target_sr=16000)
-frame_scores = inference.infer(wav)
-
-# Extract segments with post-processing
-from vad_distill.utils.postprocessing import postprocess_vad_scores
-smoothed_scores, segments = postprocess_vad_scores(
-    frame_scores,
-    smooth_method="median",
-    threshold=0.5,
-    use_hysteresis=True,
-    high_threshold=0.6,
-    low_threshold=0.4,
-)
-```
-
-### Command Line Inference
-
-```bash
-python deploy/inference_example.py audio.wav \
-    --onnx deploy/tiny_vad.onnx \
-    --output scores.npy
-```
-
-### Post-Processing Options
-
-The system includes several post-processing methods:
-
-- **Median Filter**: Smooth frame-level scores
-  ```python
-  from vad_distill.utils.postprocessing import median_filter
-  smoothed = median_filter(frame_scores, kernel_size=5)
-  ```
-
-- **Hysteresis Thresholding**: Reduce flickering with dual thresholds
-  ```python
-  from vad_distill.utils.postprocessing import hysteresis_threshold
-  binary = hysteresis_threshold(frame_scores, high_threshold=0.6, low_threshold=0.4)
-  ```
-
-- **Hangover Scheme**: Extend speech segments
-  ```python
-  from vad_distill.utils.postprocessing import hangover_scheme
-  binary = hangover_scheme(frame_scores, threshold=0.5, hangover_frames=5)
-  ```
-
-- **Complete Pipeline**: Combined post-processing
-  ```python
-  from vad_distill.utils.postprocessing import postprocess_vad_scores
-  smoothed, segments = postprocess_vad_scores(
-      frame_scores,
-      smooth_method="median",
-      threshold=0.5,
-      use_hysteresis=True,
-      use_hangover=True,
-  )
-  ```
-
-### Performance Benchmarks
-
-Typical inference speeds (measured on test hardware):
-
-- **CPU (Intel i7)**: ~2-3ms per chunk (100 frames)
-- **GPU (NVIDIA GTX 1080)**: ~0.5ms per chunk
-- **Mobile (Snapdragon 855)**: ~5-8ms per chunk
-- **Raspberry Pi 4**: ~15-20ms per chunk
-
-For real-time processing at 16kHz, all platforms above meet requirements.
-
-### Mobile / Embedded Deployment
-
-See `deploy/README_DEPLOY.md` for detailed mobile deployment instructions.
-
-## Training Features
-
-- **Automatic Logging**: All training logs saved to `logs/train.log`
-- **TensorBoard**: Training metrics visualized in `logs/tensorboard/`
-- **Checkpointing**: 
-  - `checkpoints/best.pt` - Best model
-  - `checkpoints/last.pt` - Latest checkpoint
-  - `checkpoints/optimizer.pt` - Optimizer state
-  - `checkpoints/scheduler.pt` - Learning rate scheduler state
-  - `checkpoints/config_used.yaml` - Configuration used
-  - `checkpoints/train_history.json` - Training history
-- **Resume Training**: Set `resume_from: "checkpoints/last.pt"` in config
-- **Validation**: Automatic validation every N epochs
-- **Learning Rate Scheduling**: ReduceLROnPlateau scheduler
-- **Gradient Clipping**: Automatic gradient clipping for stability
-
-## Requirements
-
-- Teacher model directory (`teacher/` in project root) must contain:
-  - `model.pt` - Model weights
-  - `config.yaml` - Model configuration
-  - `am.mvn` - Feature normalization
-  - `configuration.json` - Additional configuration
-
-- Audio files should be 16kHz mono (automatic resampling supported)
-
-## Testing
-
-Run unit tests for chunk alignment:
-
-```bash
-pytest tests/test_chunk_alignment.py -v
-```
-
-Tests verify:
-- Chunk creation alignment
-- Fbank and frame_probs length matching
-- Chunk slicing accuracy
-- Reconstruction from chunks returns exact frame count
-
-## Notes
-
-- **Chunk-based training**: All training uses fixed-size chunks (100 frames)
-- **No variable-length**: Model enforces fixed input shape
-- **Fast preprocessing**: One-time cost, training is fast
-- **Reproducibility**: Fixed seeds ensure deterministic results
-- **Strict validation**: Dataset validates all chunk shapes, fails loudly on errors
-- **Unified feature extraction**: All scripts use same config from `preprocessing/chunk_config.py`
-- **Versioned teacher labels**: Teacher labels stored in `data/teacher_labels/v1/` with metadata
+- Move to logit-based or temperature-scaled distillation.  
+- Add a streaming inference pipeline with stateful convolutions.  
+- Batch-prefetch decoding and feature extraction for lower latency.  
+- Train on multiple VAD datasets with simple domain weighting.  
+- Explore TCN / conformer variants as student backbones.  
+- Provide a minimal “lite” ONNX export and quantization recipe.

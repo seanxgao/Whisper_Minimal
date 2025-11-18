@@ -1,173 +1,146 @@
-"""Test VAD model on a single WAV file."""
+"""Run Tiny VAD on a single wav file."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import numpy as np
 from pathlib import Path
+from typing import List, Tuple
+
+import numpy as np
 import torch
-import logging
 
-from vad_distill.utils.logging_utils import setup_logging
-from vad_distill.utils.audio_io import load_wav
-from vad_distill.utils.features import log_mel
-from vad_distill.utils.chunking import chunk_fbank_features, reassemble_chunk_predictions
-from vad_distill.utils.postprocessing import postprocess_vad_scores
-from vad_distill.distill.tiny_vad.model import build_tiny_vad_model
-from preprocessing.chunk_config import (
-    CHUNK_SIZE, FRAME_LEN, FRAME_HOP, SAMPLE_RATE, N_MELS
+from vad_distill.config import load_config
+from vad_distill.config.chunk_config import FRAME_HOP, N_MELS, SAMPLE_RATE
+from vad_distill.config.data_paths import resolve_paths
+from vad_distill.preprocessing.audio_utils import compute_log_mel, load_audio
+from vad_distill.preprocessing.chunking import (
+    chunk_fbank_features,
+    reassemble_chunk_predictions,
 )
+from vad_distill.tiny_vad.model import build_tiny_vad_model
 
-logger = logging.getLogger(__name__)
+
+def _smooth(scores: np.ndarray, kernel: int = 5) -> np.ndarray:
+    pad = kernel // 2
+    padded = np.pad(scores, (pad, pad), mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, kernel)
+    return np.median(windows, axis=-1)
 
 
+def _segments(scores: np.ndarray, threshold: float) -> List[Tuple[float, float]]:
+    binary = scores > threshold
+    segments: List[Tuple[float, float]] = []
+    start = None
+    for idx, val in enumerate(binary):
+        if val and start is None:
+            start = idx
+        elif not val and start is not None:
+            segments.append((start * FRAME_HOP, idx * FRAME_HOP))
+            start = None
+    if start is not None:
+        segments.append((start * FRAME_HOP, len(binary) * FRAME_HOP))
+    return segments
+
+
+def run_inference(
+    wav_path: Path,
+    model_path: Path,
+    config_path: Path | None,
+    use_onnx: bool,
+) -> np.ndarray:
+    wav = load_audio(wav_path, target_sr=SAMPLE_RATE)
+    fbank = compute_log_mel(wav, sample_rate=SAMPLE_RATE, n_mels=N_MELS)
+    chunks = chunk_fbank_features(fbank, pad_incomplete=True)
+
+    if use_onnx:
+        import onnxruntime as ort
+
+        session = ort.InferenceSession(str(model_path))
+        preds = []
+        for _, chunk in chunks:
+            outputs = session.run(None, {"mel_features": chunk.astype(np.float32)[None, :, :]})[0]
+            preds.append(torch.sigmoid(torch.from_numpy(outputs)).squeeze().numpy())
+        return reassemble_chunk_predictions(chunks, preds)
+
+    if config_path is None:
+        raise ValueError("config path required for PyTorch checkpoints")
+    config = load_config(str(config_path))
+    model = build_tiny_vad_model(config)
+    state = torch.load(model_path, map_location="cpu")
+    model.load_state_dict(state["model_state_dict"])
+    model.eval()
+    preds = []
+    with torch.no_grad():
+        for _, chunk in chunks:
+            tensor = torch.from_numpy(chunk).unsqueeze(0)
+            logits = model(tensor)
+            preds.append(torch.sigmoid(logits).squeeze(0).numpy())
+    return reassemble_chunk_predictions(chunks, preds)
 
 
 def test_single_wav(
-    wav_path: str | Path,
-    model_path: str | Path,
-    output_dir: str | Path,
-    config_path: str | Path | None = None,
-    threshold: float = 0.5,
-    use_onnx: bool = False,
+    wav_path: Path,
+    model_path: Path,
+    output_dir: Path,
+    config_path: Path | None,
+    threshold: float,
+    use_onnx: bool,
 ) -> None:
-    """
-    Test VAD model on a single WAV file.
-    
-    Args:
-        wav_path: Path to input WAV file
-        model_path: Path to model checkpoint or ONNX file
-        output_dir: Directory to save outputs
-        config_path: Path to config file (required for PyTorch model)
-        threshold: VAD threshold for segment extraction
-        use_onnx: Whether to use ONNX model
-    """
-    wav_path = Path(wav_path)
-    model_path = Path(model_path)
-    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    if not wav_path.exists():
-        raise FileNotFoundError(f"WAV file not found: {wav_path}")
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file not found: {model_path}")
-    
-    logger.info(f"Processing {wav_path}")
-    
-    # Load audio
-    wav = load_wav(str(wav_path), target_sr=SAMPLE_RATE)
-    
-    # Extract fbank (using unified config from chunk_config)
-    fbank = log_mel(
-        wav,
-        sr=SAMPLE_RATE,
-        n_mels=N_MELS,
-        frame_len=FRAME_LEN,
-        frame_hop=FRAME_HOP,
+
+    scores = run_inference(wav_path, model_path, config_path, use_onnx)
+    smoothed = _smooth(scores)
+    segments = _segments(smoothed, threshold)
+
+    scores_path = output_dir / f"{wav_path.stem}_scores.npy"
+    seg_path = output_dir / f"{wav_path.stem}_segments.json"
+    np.save(scores_path, smoothed.astype(np.float32))
+    with open(seg_path, "w", encoding="utf-8") as handle:
+        json.dump(segments, handle, indent=2)
+
+    speech_time = sum(end - start for start, end in segments)
+    total_time = len(smoothed) * FRAME_HOP
+    print(
+        json.dumps(
+            {
+                "wav": wav_path.name,
+                "segments": len(segments),
+                "speech_seconds": round(speech_time, 2),
+                "speech_ratio": round(speech_time / total_time, 4),
+                "scores_path": str(scores_path),
+                "segments_path": str(seg_path),
+            },
+            indent=2,
+        )
     )
-    logger.info(f"Extracted fbank: {fbank.shape}")
-    
-    # Chunk audio (using unified chunking logic)
-    chunks = chunk_fbank_features(fbank, pad_incomplete=True)
-    logger.info(f"Created {len(chunks)} chunks")
-    
-    # Load model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    if use_onnx:
-        import onnxruntime as ort
-        session = ort.InferenceSession(str(model_path))
-        logger.info("Loaded ONNX model")
-    else:
-        if config_path is None:
-            raise ValueError("config_path is required for PyTorch model")
-        
-        from vad_distill.utils.config import load_yaml
-        config = load_yaml(str(config_path))
-        model = build_tiny_vad_model(config)
-        
-        checkpoint = torch.load(model_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.eval()
-        model = model.to(device)
-        logger.info("Loaded PyTorch model")
-    
-    # Run inference
-    predictions = []
-    
-    with torch.no_grad() if not use_onnx else torch.no_grad():
-        for start_frame, chunk in chunks:
-            chunk_tensor = torch.from_numpy(chunk).float().unsqueeze(0)  # (1, 100, 80)
-            
-            if use_onnx:
-                outputs = session.run(
-                    None,
-                    {'mel_features': chunk.numpy().astype(np.float32)}
-                )
-                pred = torch.sigmoid(torch.from_numpy(outputs[0])).squeeze().numpy()
-            else:
-                chunk_tensor = chunk_tensor.to(device)
-                logits = model(chunk_tensor)  # (1, 100, 1)
-                pred = torch.sigmoid(logits.squeeze(-1)).cpu().numpy()  # (100,)
-            
-            predictions.append(pred)
-    
-    # Reassemble predictions (using unified reassembly logic)
-    frame_scores = reassemble_chunk_predictions(chunks, predictions)
-    logger.info(f"Reassembled predictions: {frame_scores.shape}")
-    
-    # Post-process and extract segments
-    smoothed_scores, segments = postprocess_vad_scores(
-        frame_scores,
-        smooth_method="median",
-        threshold=threshold,
-        use_hysteresis=False,
-        use_hangover=False,
-    )
-    logger.info(f"Extracted {len(segments)} segments")
-    
-    # Save outputs
-    output_name = wav_path.stem
-    
-    # Save frame scores (smoothed)
-    scores_path = output_dir / f"{output_name}_scores.npy"
-    np.save(scores_path, smoothed_scores)
-    logger.info(f"Saved frame scores to {scores_path}")
-    
-    # Save segments
-    segments_path = output_dir / f"{output_name}_segments.json"
-    with open(segments_path, 'w') as f:
-        json.dump(segments, f, indent=2)
-    logger.info(f"Saved segments to {segments_path}")
-    
-    # Print summary
-    print(f"\nResults for {wav_path.name}:")
-    print(f"  Total duration: {len(frame_scores) * FRAME_HOP:.2f} seconds")
-    print(f"  Speech segments: {len(segments)}")
-    print(f"  Total speech time: {sum(end - start for start, end in segments):.2f} seconds")
-    print(f"  Speech ratio: {sum(end - start for start, end in segments) / (len(frame_scores) * FRAME_HOP):.2%}")
 
 
-def main():
-    """Main entry point."""
-    setup_logging()
-    
-    parser = argparse.ArgumentParser(description="Test VAD model on single WAV file")
-    parser.add_argument('wav_path', type=str, help='Path to input WAV file')
-    parser.add_argument('model_path', type=str, help='Path to model checkpoint or ONNX file')
-    parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
-    parser.add_argument('--config', type=str, help='Path to config file (required for PyTorch)')
-    parser.add_argument('--threshold', type=float, default=0.5, help='VAD threshold')
-    parser.add_argument('--onnx', action='store_true', help='Use ONNX model')
-    
-    args = parser.parse_args()
-    
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Tiny VAD on a wav file.")
+    parser.add_argument("wav_path")
+    parser.add_argument("model_path")
+    parser.add_argument(
+        "--output-dir",
+        help="Directory to store inference logs (defaults to config.paths.logs_dir/single_wav).",
+    )
+    parser.add_argument("--config", help="Config path for PyTorch checkpoints.")
+    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--onnx", action="store_true", help="Use ONNX model.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    paths = resolve_paths(config.get("paths", {}))
+    default_logs = paths.get("logs_dir", Path.cwd() / "logs") / "single_wav"
+    output_dir = Path(args.output_dir) if args.output_dir else default_logs
     test_single_wav(
-        wav_path=args.wav_path,
-        model_path=args.model_path,
-        output_dir=args.output_dir,
-        config_path=args.config,
+        wav_path=Path(args.wav_path),
+        model_path=Path(args.model_path),
+        output_dir=output_dir,
+        config_path=Path(args.config) if args.config else None,
         threshold=args.threshold,
         use_onnx=args.onnx,
     )
@@ -175,4 +148,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
