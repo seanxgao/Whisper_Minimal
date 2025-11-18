@@ -64,25 +64,41 @@ This saves smoothed scores (`*_scores.npy`) and speech segments (`*_segments.jso
 ### Notebook demos
 
 - `notebooks/data_preprocessing.ipynb`: end-to-end pipeline from raw audio to chunks and teacher labels.  
+  
+  ![Data preprocessing pipeline](notebooks/pictures/data_preprocessing.png)
+
 - `notebooks/train_tiny_vad.ipynb`: short training run with loss curves and best checkpoint inspection.  
-- `notebooks/inspect_best_student.ipynb`: compare teacher vs student probabilities over a full utterance.  
+  
+  ![Training MSE curves](notebooks/pictures/trainingmse.png)
+
+- `notebooks/inspect_best_student.ipynb`: compare teacher vs student probabilities and agreement metrics on a full utterance.  
+  
+  ![Teacher vs student agreement view](notebooks/pictures/agreements.png)
+
 - `notebooks/inference_demo.ipynb`: run the exported ONNX model on a clip and plot student probabilities.
 
-## Visual examples
+## Benchmark (single-clip runtime)
 
-Snapshots from the notebooks:
+The notebook `notebooks/inspect_best_student.ipynb` includes a small benchmark that
+compares teacher and student VAD on the same 87 s, 16 kHz mono clip using the
+default configuration and the `best.pt` checkpoint.
 
-- Data preprocessing pipeline (`data_preprocessing.ipynb`):
+### GPU/auto device (if CUDA is available)
 
-  ![Data preprocessing](notebooks/pictures/data_preprocessing.png)
+| role    | device   | time [s] | real-time factor | peak memory [MB] |
+|---------|----------|----------|------------------|------------------|
+| teacher | gpu/auto | 4.47     | 19.46            | 20.0             |
+| student | gpu/auto | 0.09     | 922.08           | 33.9             |
 
-- Training loss curves (`train_tiny_vad.ipynb`):
+### CPU-only (same clip)
 
-  ![Training MSE](notebooks/pictures/trainingmse.png)
+| role    | device | time [s] | real-time factor | memory [MB] |
+|---------|--------|----------|------------------|-------------|
+| teacher | cpu    | 2.38     | 36.57            | 1063.4      |
+| student | cpu    | 0.28     | 312.00           | 1010.0      |
 
-- Teacher vs student alignment (`inspect_best_student.ipynb`):
-
-  ![Student vs teacher probabilities](notebooks/pictures/inspect_best_student.png)
+Frame-level agreement between student and teacher is high on this clip
+(`mse_vs_teacher ≈ 2.7e-3`, `mae_vs_teacher ≈ 3.9e-2`).
 
 ## Export (TorchScript / ONNX)
 
