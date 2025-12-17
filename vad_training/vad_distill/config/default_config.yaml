@@ -1,0 +1,61 @@
+# Global settings
+seed: 2025
+
+paths:
+  data_root: "H:/wenet_data_processed"
+  chunks_dir: "H:/wenet_data_processed/chunks"
+  features_dir: "H:/wenet_data_processed/features"
+  metadata_dir: "H:/wenet_data_processed/metadata"
+  teacher_prob_dir: "H:/wenet_data_processed/chunks"
+  checkpoint_dir: "H:/Personal Projects/VAD_mini/outputs/checkpoints"
+  logs_dir: "H:/Personal Projects/VAD_mini/outputs/logs"
+  onnx_dir: "H:/Personal Projects/VAD_mini/outputs/export"
+
+chunking:
+  chunk_size: 100
+  stride: 50
+  n_mels: 80
+  frame_len: 0.025
+  frame_hop: 0.01
+
+teacher:
+  window_size: 512
+  hop_size: 160
+  device: "auto"
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  epochs: 60
+
+  # ---- DataLoader optimization ----
+  num_workers: 4            
+  prefetch_factor: 2       
+  persistent_workers: false 
+  pin_memory: true
+
+  optimizer: "adamw"
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+
+  validation_split: 0.1
+  limit_train_chunks: null
+  limit_val_chunks: null
+
+  use_random_subset: false
+  subset_size: 50000
+
+  early_stopping:
+    enabled: true
+    patience: 3
+
+model:
+  n_mels: 80
+  cnn_channels: 128
+  lstm_hidden: 64
+  dropout: 0.1
+
+evaluation:
+  threshold: 0.5
+  min_duration: 0.2
+

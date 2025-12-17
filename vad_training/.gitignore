@@ -1,0 +1,90 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+vad_env/
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Cursor
+.cursor/
+.cursorrules
+
+# Cache
+.cache/
+*.cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# Training outputs
+training_history.json
+models/
+data/
+# Note: data/tiny_vad_inputs/ contains cached features for faster training
+# These are large but useful - keep them locally, don't commit
+
+# Distillation artifacts
+vad_distill/data/
+vad_distill/tiny_vad/checkpoints/
+vad_distill/tiny_vad/export/
+vad_distill/tiny_vad/runs/
+
+# External data mirrors (never commit large assets)
+data/
+data/chunks/
+data/teacher_probs/
+data/raw*/
+data/selected*/
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+~*
+
